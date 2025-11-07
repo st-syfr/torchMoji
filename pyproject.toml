@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torchmoji"
+version = "1.0"
+description = "torchMoji"
+readme = "README.md"
+authors = [
+    { name = "Hugging Face" }
+]
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "emoji>=1.6,<3",
+    "numpy>=1.22,<3",
+    "scipy>=1.8,<2",
+    "scikit-learn>=1.1,<2",
+    "text-unidecode>=1.3,<2",
+    "torch>=1.12,<3"
+]
+
+[project.urls]
+Homepage = "https://github.com/huggingface/torchMoji"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["torchmoji", "torchmoji.*"]
