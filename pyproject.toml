@@ -29,3 +29,8 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 include = ["torchmoji", "torchmoji.*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow and requires additional resources"
+]
