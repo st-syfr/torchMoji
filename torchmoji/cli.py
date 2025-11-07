@@ -11,7 +11,12 @@ import emoji
 import numpy as np
 import torch
 
-from .emojis import EMOJI_ALIASES
+from .emojis import (
+    EMOJI_ALIASES,
+    EmotionName,
+    NonNeutralEmotionName,
+    filter_emojis_by_emotion,
+)
 from .global_variables import PRETRAINED_PATH, VOCAB_PATH
 from .model_def import torchmoji_emojis
 from .sentence_tokenizer import SentenceTokenizer
@@ -66,6 +71,38 @@ def build_parser() -> argparse.ArgumentParser:
         "--scores",
         action="store_true",
         help="Include the prediction score for each emoji.",
+    )
+    emojize_parser.add_argument(
+        "--emotions",
+        nargs="+",
+        choices=EmotionName,
+        default=list(EmotionName),
+        metavar="EMOTION",
+        help=(
+            "Ekman core emotions to allow in the output. Default includes all emotions: "
+            + ", ".join(EmotionName)
+            + "."
+        ),
+    )
+    emojize_parser.add_argument(
+        "--weak-emotions",
+        nargs="*",
+        choices=NonNeutralEmotionName,
+        metavar="EMOTION",
+        help=(
+            "Emotions that may appear in their weak form. "
+            "Default includes all non-neutral emotions."
+        ),
+    )
+    emojize_parser.add_argument(
+        "--strong-emotions",
+        nargs="*",
+        choices=NonNeutralEmotionName,
+        metavar="EMOTION",
+        help=(
+            "Emotions that may appear in their strong form. "
+            "Default includes all non-neutral emotions."
+        ),
     )
     emojize_parser.set_defaults(func=_run_emojize)
 
@@ -163,18 +200,38 @@ def _run_emojize(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
-    top_indices = _top_indices(probabilities, args.top_k)
+    weak_emotions = None if args.weak_emotions is None else list(args.weak_emotions)
+    strong_emotions = None if args.strong_emotions is None else list(args.strong_emotions)
+
+    selections = None
+    if probabilities.size == len(EMOJI_ALIASES):
+        selections = filter_emojis_by_emotion(
+            probabilities,
+            args.top_k,
+            args.emotions,
+            weak_emotions,
+            strong_emotions,
+        )
+    else:
+        top_indices = _top_indices(probabilities, args.top_k)
+        selections = [(index, None) for index in top_indices]
 
     print(f"Input: {args.text}")
     print("Top predictions:")
-    for rank, index in enumerate(top_indices, start=1):
+    for rank, (index, ranking) in enumerate(selections, start=1):
         alias = EMOJI_ALIASES[index]
         char = _emoji_from_alias(alias)
+        emotion_label = None
+        if ranking is not None:
+            emotion_label = ranking.emotion
+            if ranking.intensity is not None:
+                emotion_label = f"{emotion_label} ({ranking.intensity})"
+        label_suffix = f" -> {emotion_label}" if emotion_label else ""
         if args.scores and index < probabilities.size:
             score = float(probabilities[index])
-            print(f"{rank}. {char} {alias} (score={score:.4f})")
+            print(f"{rank}. {char} {alias}{label_suffix} (score={score:.4f})")
         else:
-            print(f"{rank}. {char} {alias}")
+            print(f"{rank}. {char} {alias}{label_suffix}")
 
     return 0
 
