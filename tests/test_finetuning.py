@@ -1,10 +1,10 @@
-from __future__ import absolute_import, print_function, division, unicode_literals
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
 
 import test_helper
-
-from nose.plugins.attrib import attr
-import json
-import numpy as np
 
 from torchmoji.class_avg_finetuning import relabel
 from torchmoji.sentence_tokenizer import SentenceTokenizer
@@ -14,26 +14,42 @@ from torchmoji.finetuning import (
     freeze_layers,
     change_trainable,
     finetune,
-    load_benchmark
-    )
+    load_benchmark,
+)
 from torchmoji.model_def import (
     torchmoji_transfer,
     torchmoji_feature_encoding,
-    torchmoji_emojis
-    )
+    torchmoji_emojis,
+)
 from torchmoji.global_variables import (
     PRETRAINED_PATH,
     NB_TOKENS,
     VOCAB_PATH,
-    ROOT_PATH
-    )
+    ROOT_PATH,
+)
+
+VOCAB_FILE = Path(VOCAB_PATH)
+WEIGHTS_FILE = Path(PRETRAINED_PATH)
+DATASET_FILE = Path(ROOT_PATH) / 'data' / 'SS-Youtube' / 'raw.pickle'
+
+requires_weights = pytest.mark.skipif(
+    not WEIGHTS_FILE.exists(),
+    reason="Pretrained torchMoji weights are not available.",
+)
+requires_dataset = pytest.mark.skipif(
+    not DATASET_FILE.exists(),
+    reason="SS-Youtube dataset is not available.",
+)
+
+
+def _load_vocab():
+    with VOCAB_FILE.open('r', encoding='utf-8') as f:
+        return json.load(f)
 
 
 def test_calculate_batchsize_maxlen():
-    """ Batch size and max length are calculated properly.
-    """
-    texts = ['a b c d',
-             'e f g h i']
+    """Batch size and max length are calculated properly."""
+    texts = ['a b c d', 'e f g h i']
     batch_size, maxlen = calculate_batchsize_maxlen(texts)
 
     assert batch_size == 250
@@ -41,8 +57,7 @@ def test_calculate_batchsize_maxlen():
 
 
 def test_freeze_layers():
-    """ Correct layers are frozen.
-    """
+    """Correct layers are frozen."""
     model = torchmoji_transfer(5)
     keyword = 'output_layer'
 
@@ -54,8 +69,7 @@ def test_freeze_layers():
 
 
 def test_change_trainable():
-    """ change_trainable() changes trainability of layers.
-    """
+    """change_trainable() changes trainability of layers."""
     model = torchmoji_transfer(5)
     change_trainable(model.embed, False)
     assert not any(p.requires_grad for p in model.embed.parameters())
@@ -64,29 +78,24 @@ def test_change_trainable():
 
 
 def test_torchmoji_transfer_extend_embedding():
-    """ Defining torchmoji with extension.
-    """
+    """Defining torchmoji with extension adjusts embedding size."""
     extend_with = 50
-    model = torchmoji_transfer(5, weight_path=PRETRAINED_PATH,
-                              extend_embedding=extend_with)
+    model = torchmoji_transfer(5, weight_path=None, extend_embedding=extend_with)
     embedding_layer = model.embed
     assert embedding_layer.weight.size()[0] == NB_TOKENS + extend_with
 
 
+@requires_weights
 def test_torchmoji_return_attention():
     seq_tensor = np.array([[1]])
-    # test the output of the normal model
     model = torchmoji_emojis(weight_path=PRETRAINED_PATH)
-    # check correct number of outputs
     assert len(model(seq_tensor)) == 1
-    # repeat above described tests when returning attention weights
     model = torchmoji_emojis(weight_path=PRETRAINED_PATH, return_attention=True)
     assert len(model(seq_tensor)) == 2
 
 
 def test_relabel():
-    """ relabel() works with multi-class labels.
-    """
+    """relabel() works with multi-class labels."""
     nb_classes = 3
     inputs = np.array([
         [True, False, False],
@@ -103,133 +112,120 @@ def test_relabel():
 
 
 def test_relabel_binary():
-    """ relabel() works with binary classification (no changes to labels)
-    """
+    """relabel() works with binary classification (no changes to labels)."""
     nb_classes = 2
     inputs = np.array([True, False, False])
 
     assert np.array_equal(relabel(inputs, 0, nb_classes), inputs)
 
 
-@attr('slow')
+@pytest.mark.slow
+@requires_weights
+@requires_dataset
 def test_finetune_full():
-    """ finetuning using 'full'.
-    """
-    DATASET_PATH = ROOT_PATH+'/data/SS-Youtube/raw.pickle'
+    """finetuning using 'full'."""
     nb_classes = 2
-    # Keras and pyTorch implementation of the Adam optimizer are slightly different and change a bit the results
-    # We reduce the min accuracy needed here to pass the test
-    # See e.g. https://discuss.pytorch.org/t/suboptimal-convergence-when-compared-with-tensorflow-model/5099/11
     min_acc = 0.68
 
-    with open(VOCAB_PATH, 'r') as f:
-        vocab = json.load(f)
-
-    data = load_benchmark(DATASET_PATH, vocab, extend_with=10000)
-    print('Loading pyTorch model from {}.'.format(PRETRAINED_PATH))
+    vocab = _load_vocab()
+    data = load_benchmark(str(DATASET_FILE), vocab, extend_with=10000)
     model = torchmoji_transfer(nb_classes, PRETRAINED_PATH, extend_embedding=data['added'])
-    print(model)
-    model, acc = finetune(model, data['texts'], data['labels'], nb_classes,
-                          data['batch_size'], method='full', nb_epochs=1)
+    model, acc = finetune(
+        model,
+        data['texts'],
+        data['labels'],
+        nb_classes,
+        data['batch_size'],
+        method='full',
+        nb_epochs=1,
+    )
 
-    print("Finetune full SS-Youtube 1 epoch acc: {}".format(acc))
     assert acc >= min_acc
 
 
-@attr('slow')
+@pytest.mark.slow
+@requires_weights
+@requires_dataset
 def test_finetune_last():
-    """ finetuning using 'last'.
-    """
-    dataset_path = ROOT_PATH + '/data/SS-Youtube/raw.pickle'
+    """finetuning using 'last'."""
     nb_classes = 2
     min_acc = 0.68
 
-    with open(VOCAB_PATH, 'r') as f:
-        vocab = json.load(f)
-
-    data = load_benchmark(dataset_path, vocab)
-    print('Loading model from {}.'.format(PRETRAINED_PATH))
+    vocab = _load_vocab()
+    data = load_benchmark(str(DATASET_FILE), vocab)
     model = torchmoji_transfer(nb_classes, PRETRAINED_PATH)
-    print(model)
-    model, acc = finetune(model, data['texts'], data['labels'], nb_classes,
-                          data['batch_size'], method='last', nb_epochs=1)
-
-    print("Finetune last SS-Youtube 1 epoch acc: {}".format(acc))
+    model, acc = finetune(
+        model,
+        data['texts'],
+        data['labels'],
+        nb_classes,
+        data['batch_size'],
+        method='last',
+        nb_epochs=1,
+    )
 
     assert acc >= min_acc
 
 
+@requires_weights
 def test_score_emoji():
-    """ Emoji predictions make sense.
-    """
+    """Emoji predictions make sense."""
     test_sentences = [
-        'I love mom\'s cooking',
-        'I love how you never reply back..',
-        'I love cruising with my homies',
-        'I love messing with yo mind!!',
-        'I love you and now you\'re just gone..',
-        'This is shit',
-        'This is the shit'
+        "I love mom's cooking",
+        "I love how you never reply back..",
+        "I love cruising with my homies",
+        "I love messing with yo mind!!",
+        "I love you and now you're just gone..",
+        "This is shit",
+        "This is the shit",
     ]
 
     expected = [
-        np.array([36,  4,  8, 16, 47]),
+        np.array([36, 4, 8, 16, 47]),
         np.array([1, 19, 55, 25, 46]),
-        np.array([31,  6, 30, 15, 13]),
-        np.array([54, 44,  9, 50, 49]),
-        np.array([46,  5, 27, 35, 34]),
-        np.array([55, 32, 27,  1, 37]),
-        np.array([48, 11,  6, 31,  9])
+        np.array([31, 6, 30, 15, 13]),
+        np.array([54, 44, 9, 50, 49]),
+        np.array([46, 5, 27, 35, 34]),
+        np.array([55, 32, 27, 1, 37]),
+        np.array([48, 11, 6, 31, 9]),
     ]
+
+    vocab = _load_vocab()
+    st = SentenceTokenizer(vocab, 30)
+    tokens, _, _ = st.tokenize_sentences(test_sentences)
+
+    model = torchmoji_emojis(weight_path=PRETRAINED_PATH)
+    prob = model(tokens)
 
     def top_elements(array, k):
         ind = np.argpartition(array, -k)[-k:]
         return ind[np.argsort(array[ind])][::-1]
 
-    # Initialize by loading dictionary and tokenize texts
-    with open(VOCAB_PATH, 'r') as f:
-        vocabulary = json.load(f)
-
-    st = SentenceTokenizer(vocabulary, 30)
-    tokens, _, _ = st.tokenize_sentences(test_sentences)
-
-    # Load model and run
-    model = torchmoji_emojis(weight_path=PRETRAINED_PATH)
-    prob = model(tokens)
-
-    # Find top emojis for each sentence
     for i, t_prob in enumerate(list(prob)):
         assert np.array_equal(top_elements(t_prob, 5), expected[i])
 
 
+@requires_weights
 def test_encode_texts():
-    """ Text encoding is stable.
-    """
-
-    TEST_SENTENCES = ['I love mom\'s cooking',
-                      'I love how you never reply back..',
-                      'I love cruising with my homies',
-                      'I love messing with yo mind!!',
-                      'I love you and now you\'re just gone..',
-                      'This is shit',
-                      'This is the shit']
-
+    """Text encoding is stable."""
+    test_sentences = [
+        "I love mom's cooking",
+        "I love how you never reply back..",
+        "I love cruising with my homies",
+        "I love messing with yo mind!!",
+        "I love you and now you're just gone..",
+        "This is shit",
+        "This is the shit",
+    ]
 
     maxlen = 30
-    batch_size = 32
 
-    with open(VOCAB_PATH, 'r') as f:
-        vocabulary = json.load(f)
+    vocab = _load_vocab()
+    st = SentenceTokenizer(vocab, maxlen)
 
-    st = SentenceTokenizer(vocabulary, maxlen)
-
-    print('Loading model from {}.'.format(PRETRAINED_PATH))
     model = torchmoji_feature_encoding(PRETRAINED_PATH)
-    print(model)
-    tokenized, _, _ = st.tokenize_sentences(TEST_SENTENCES)
+    tokenized, _, _ = st.tokenize_sentences(test_sentences)
     encoding = model(tokenized)
 
     avg_across_sentences = np.around(np.mean(encoding, axis=0)[:5], 3)
     assert np.allclose(avg_across_sentences, np.array([-0.023, 0.021, -0.037, -0.001, -0.005]))
-
-test_encode_texts()
