@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import numpy as np
@@ -24,11 +23,9 @@ from torchmoji.model_def import (
 from torchmoji.global_variables import (
     PRETRAINED_PATH,
     NB_TOKENS,
-    VOCAB_PATH,
     ROOT_PATH,
 )
 
-VOCAB_FILE = Path(VOCAB_PATH)
 WEIGHTS_FILE = Path(PRETRAINED_PATH)
 DATASET_FILE = Path(ROOT_PATH) / 'data' / 'SS-Youtube' / 'raw.pickle'
 
@@ -40,11 +37,6 @@ requires_dataset = pytest.mark.skipif(
     not DATASET_FILE.exists(),
     reason="SS-Youtube dataset is not available.",
 )
-
-
-def _load_vocab():
-    with VOCAB_FILE.open('r', encoding='utf-8') as f:
-        return json.load(f)
 
 
 def test_calculate_batchsize_maxlen():
@@ -122,12 +114,11 @@ def test_relabel_binary():
 @pytest.mark.slow
 @requires_weights
 @requires_dataset
-def test_finetune_full():
+def test_finetune_full(vocab):
     """finetuning using 'full'."""
     nb_classes = 2
     min_acc = 0.68
 
-    vocab = _load_vocab()
     data = load_benchmark(str(DATASET_FILE), vocab, extend_with=10000)
     model = torchmoji_transfer(nb_classes, PRETRAINED_PATH, extend_embedding=data['added'])
     model, acc = finetune(
@@ -146,12 +137,11 @@ def test_finetune_full():
 @pytest.mark.slow
 @requires_weights
 @requires_dataset
-def test_finetune_last():
+def test_finetune_last(vocab):
     """finetuning using 'last'."""
     nb_classes = 2
     min_acc = 0.68
 
-    vocab = _load_vocab()
     data = load_benchmark(str(DATASET_FILE), vocab)
     model = torchmoji_transfer(nb_classes, PRETRAINED_PATH)
     model, acc = finetune(
@@ -168,7 +158,7 @@ def test_finetune_last():
 
 
 @requires_weights
-def test_score_emoji():
+def test_score_emoji(vocab):
     """Emoji predictions make sense."""
     test_sentences = [
         "I love mom's cooking",
@@ -190,7 +180,6 @@ def test_score_emoji():
         np.array([48, 11, 6, 31, 9]),
     ]
 
-    vocab = _load_vocab()
     st = SentenceTokenizer(vocab, 30)
     tokens, _, _ = st.tokenize_sentences(test_sentences)
 
@@ -206,7 +195,7 @@ def test_score_emoji():
 
 
 @requires_weights
-def test_encode_texts():
+def test_encode_texts(vocab):
     """Text encoding is stable."""
     test_sentences = [
         "I love mom's cooking",
@@ -220,7 +209,6 @@ def test_encode_texts():
 
     maxlen = 30
 
-    vocab = _load_vocab()
     st = SentenceTokenizer(vocab, maxlen)
 
     model = torchmoji_feature_encoding(PRETRAINED_PATH)

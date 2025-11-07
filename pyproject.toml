@@ -24,6 +24,11 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/huggingface/torchMoji"
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7",
+]
+
 [tool.setuptools]
 include-package-data = true
 

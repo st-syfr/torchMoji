@@ -1,6 +1,3 @@
-import json
-from pathlib import Path
-
 import test_helper
 
 from torchmoji.sentence_tokenizer import SentenceTokenizer
@@ -24,12 +21,7 @@ train_ind = [0, 5, 3, 6, 8]
 val_ind = [9, 2, 1]
 test_ind = [4, 7]
 
-VOCAB_PATH = Path(__file__).resolve().parents[1] / 'model' / 'vocabulary.json'
-with VOCAB_PATH.open('r', encoding='utf-8') as f:
-    vocab = json.load(f)
-
-
-def test_dataset_split_parameter():
+def test_dataset_split_parameter(vocab):
     """Dataset is split in the desired ratios."""
     split_parameter = [0.7, 0.1, 0.2]
     st = SentenceTokenizer(vocab, 30)
@@ -54,7 +46,7 @@ def test_dataset_split_parameter():
     assert len(test_dicts) == len(dicts) * split_parameter[2]
 
 
-def test_dataset_split_explicit():
+def test_dataset_split_explicit(vocab):
     """Dataset is split according to given indices."""
     split_parameter = [train_ind, val_ind, test_ind]
     st = SentenceTokenizer(vocab, 30)

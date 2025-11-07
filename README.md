@@ -52,18 +52,22 @@ python scripts/download_weights.py
 ```
 
 ## Testing
-To run the tests, install [nose](http://nose.readthedocs.io/en/latest/). After installing, navigate to the [tests/](tests) directory and run:
+To run the test suite with Python 3.10+, install [pytest](https://docs.pytest.org/) in your environment:
 
 ```bash
-cd tests
-nosetests -v
+python -m pip install pytest
 ```
 
-By default, this will also run finetuning tests. These tests train the model for one epoch and then check the resulting accuracy, which may take several minutes to finish. If you'd prefer to exclude those, run the following instead:
+Then execute the tests from the repository root:
 
 ```bash
-cd tests
-nosetests -v -a '!slow'
+pytest -v
+```
+
+By default this will also run the finetuning tests. These tests train the model for one epoch and then check the resulting accuracy, which may take several minutes to finish. If you'd prefer to exclude those during iteration, use pytest's marker selection:
+
+```bash
+pytest -v -m "not slow"
 ```
 
 ## Disclaimer
