@@ -134,7 +134,7 @@ class TorchMoji(nn.Module):
         self.add_module('embed', nn.Embedding(nb_tokens, embedding_dim))
         # dropout2D: embedding channels are dropped out instead of words
         # many exampels in the datasets contain few words that losing one or more words can alter the emotions completely
-        self.add_module('embed_dropout', nn.Dropout2d(embed_dropout_rate))
+        self.add_module('embed_dropout', nn.Dropout(embed_dropout_rate))
         self.add_module('lstm_0', LSTMHardSigmoid(embedding_dim, hidden_size, batch_first=True, bidirectional=True))
         self.add_module('lstm_1', LSTMHardSigmoid(hidden_size*2, hidden_size, batch_first=True, bidirectional=True))
         self.add_module('attention_layer', Attention(attention_size=attention_size, return_attention=return_attention))
@@ -144,7 +144,7 @@ class TorchMoji(nn.Module):
                 self.add_module('output_layer', nn.Sequential(nn.Linear(attention_size, nb_classes if self.nb_classes > 2 else 1)))
             else:
                 self.add_module('output_layer', nn.Sequential(nn.Linear(attention_size, nb_classes if self.nb_classes > 2 else 1),
-                                                              nn.Softmax() if self.nb_classes > 2 else nn.Sigmoid()))
+                                                              nn.Softmax(dim=1) if self.nb_classes > 2 else nn.Sigmoid()))
         self.init_weights()
         # Put model in evaluation mode by default
         self.eval()
@@ -156,15 +156,15 @@ class TorchMoji(nn.Module):
         ih = (param.data for name, param in self.named_parameters() if 'weight_ih' in name)
         hh = (param.data for name, param in self.named_parameters() if 'weight_hh' in name)
         b = (param.data for name, param in self.named_parameters() if 'bias' in name)
-        nn.init.uniform(self.embed.weight.data, a=-0.5, b=0.5)
+        nn.init.uniform_(self.embed.weight, a=-0.5, b=0.5)
         for t in ih:
-            nn.init.xavier_uniform(t)
+            nn.init.xavier_uniform_(t)
         for t in hh:
-            nn.init.orthogonal(t)
+            nn.init.orthogonal_(t)
         for t in b:
-            nn.init.constant(t, 0)
+            nn.init.constant_(t, 0)
         if not self.feature_output:
-            nn.init.xavier_uniform(self.output_layer[0].weight.data)
+            nn.init.xavier_uniform_(self.output_layer[0].weight)
 
     def forward(self, input_seqs):
         """ Forward pass.
@@ -211,11 +211,14 @@ class TorchMoji(nn.Module):
         x = self.embed(packed_input.data)
         x = nn.Tanh()(x)
 
-        # pyTorch 2D dropout2d operate on axis 1 which is fine for us
+        # Dropout on embeddings
         x = self.embed_dropout(x)
 
         # Update packed sequence data for RNN
-        packed_input = PackedSequence(x, packed_input.batch_sizes)
+        packed_input = PackedSequence(x,
+                                      packed_input.batch_sizes,
+                                      packed_input.sorted_indices,
+                                      packed_input.unsorted_indices)
 
         # skip-connection from embedding to output eases gradient-flow and allows access to lower-level features
         # ordering of the way the merge is done is important for consistency with the pretrained model
@@ -226,7 +229,9 @@ class TorchMoji(nn.Module):
         packed_input = PackedSequence(torch.cat((lstm_1_output.data,
                                                  lstm_0_output.data,
                                                  packed_input.data), dim=1),
-                                      packed_input.batch_sizes)
+                                      packed_input.batch_sizes,
+                                      packed_input.sorted_indices,
+                                      packed_input.unsorted_indices)
 
         input_seqs, _ = pad_packed_sequence(packed_input, batch_first=True)
 
