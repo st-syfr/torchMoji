@@ -11,7 +11,7 @@ weights_folder = 'model'
 weights_path = '{}/{}'.format(weights_folder, weights_filename)
 if curr_folder == 'scripts':
     weights_path = '../' + weights_path
-weights_download_link = 'https://www.dropbox.com/s/q8lax9ary32c7t9/pytorch_model.bin?dl=0#'
+weights_download_link = 'https://www.dropbox.com/s/q8lax9ary32c7t9/pytorch_model.bin?dl=1'
 
 
 MB_FACTOR = float(1<<20)
@@ -58,8 +58,17 @@ if download:
         if weights_dir and not os.path.exists(weights_dir):
             os.makedirs(weights_dir)
 
-        with urlopen(weights_download_link) as response, open(abs_weights_path, 'wb') as out_file:
-            shutil.copyfileobj(response, out_file)
+        with urlopen(weights_download_link) as response:
+            content_type = response.info().get_content_type()
+            if content_type and content_type.startswith('text'):
+                raise ValueError(
+                    'Download failed. The server returned unexpected content type: {}.\n'
+                    'The download link might be invalid or require additional authentication.'
+                    .format(content_type)
+                )
+
+            with open(abs_weights_path, 'wb') as out_file:
+                shutil.copyfileobj(response, out_file)
 
         if os.path.getsize(weights_path) / MB_FACTOR < 80:
             raise ValueError("Download finished, but the resulting file is too small! " +
