@@ -1,7 +1,8 @@
 from __future__ import print_function
 import os
-from subprocess import call
 from builtins import input
+import shutil
+from urllib.request import urlopen
 
 curr_folder = os.path.basename(os.path.normpath(os.getcwd()))
 
@@ -52,10 +53,13 @@ if download:
         #with open(weights_path,'wb') as f:
         #    f.write(requests.get(weights_download_link).content)
 
-        # downloading using wget due to issues with urlretrieve and requests
-        sys_call = 'wget {} -O {}'.format(weights_download_link, os.path.abspath(weights_path))
-        print("Running system call: {}".format(sys_call))
-        call(sys_call, shell=True)
+        abs_weights_path = os.path.abspath(weights_path)
+        weights_dir = os.path.dirname(abs_weights_path)
+        if weights_dir and not os.path.exists(weights_dir):
+            os.makedirs(weights_dir)
+
+        with urlopen(weights_download_link) as response, open(abs_weights_path, 'wb') as out_file:
+            shutil.copyfileobj(response, out_file)
 
         if os.path.getsize(weights_path) / MB_FACTOR < 80:
             raise ValueError("Download finished, but the resulting file is too small! " +
