@@ -108,7 +108,7 @@ def separate_emojis_and_text(text):
     emoji_chars = []
     non_emoji_chars = []
     for c in text:
-        if c in emoji.UNICODE_EMOJI:
+        if c in emoji.EMOJI_DATA:
             emoji_chars.append(c)
         else:
             non_emoji_chars.append(c)
@@ -116,7 +116,18 @@ def separate_emojis_and_text(text):
 
 def extract_emojis(text, wanted_emojis):
     text = remove_variation_selectors(text)
-    return [c for c in text if c in wanted_emojis]
+    if wanted_emojis is None:
+        normalized_wanted = None
+    else:
+        normalized_wanted = {remove_variation_selectors(str(e))
+                             for e in wanted_emojis}
+    extracted = []
+    for c in text:
+        if c not in emoji.EMOJI_DATA:
+            continue
+        if normalized_wanted is None or c in normalized_wanted:
+            extracted.append(c)
+    return extracted
 
 def remove_variation_selectors(text):
     """ Remove styling glyph variants for Unicode characters.
