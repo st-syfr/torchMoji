@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-'''
+''' 
 Provides functionality for converting a given list of tokens (words) into
 numbers, according to the given vocabulary.
 '''
-from __future__ import print_function, division, unicode_literals
-
 import numbers
 import numpy as np
 

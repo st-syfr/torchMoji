@@ -1,6 +1,5 @@
 
 # -*- coding: utf-8 -*-
-from __future__ import print_function, division, unicode_literals
 import sys
 import re
 import string
@@ -10,11 +9,6 @@ from itertools import groupby
 import numpy as np
 from torchmoji.tokenizer import RE_MENTION, RE_URL
 from torchmoji.global_variables import SPECIAL_TOKENS
-
-try:
-    unichr        # Python 2
-except NameError:
-    unichr = chr  # Python 3
 
 
 AtMentionRegex = re.compile(RE_MENTION)
@@ -39,8 +33,8 @@ VARIATION_SELECTORS = [ '\ufe00',
                         '\ufe0f']
 
 # from https://stackoverflow.com/questions/92438/stripping-non-printable-characters-from-a-string-in-python
-ALL_CHARS = (unichr(i) for i in range(sys.maxunicode))
-CONTROL_CHARS = ''.join(map(unichr, list(range(0,32)) + list(range(127,160))))
+ALL_CHARS = (chr(i) for i in range(sys.maxunicode))
+CONTROL_CHARS = ''.join(map(chr, list(range(0,32)) + list(range(127,160))))
 CONTROL_CHAR_REGEX = re.compile('[%s]' % re.escape(CONTROL_CHARS))
 
 def is_special_token(word):
@@ -138,8 +132,11 @@ def shorten_word(word):
 
     # only shorten ASCII words
     try:
-        word.decode('ascii')
-    except (UnicodeDecodeError, UnicodeEncodeError, AttributeError) as e:
+        if isinstance(word, bytes):
+            word = word.decode('ascii')
+        else:
+            word.encode('ascii')
+    except (UnicodeDecodeError, UnicodeEncodeError, AttributeError):
         return word
 
     # must have at least 3 char to be shortened

@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-from __future__ import print_function, division
 import codecs
 import csv
 import numpy as np
@@ -20,11 +19,14 @@ def read_english(path="english_words.txt", add_emojis=True):
 
 def read_wanted_emojis(path="wanted_emojis.csv"):
     emojis = []
-    with open(path, 'rb') as f:
+    with open(path, newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         for line in reader:
             line = line[0].strip().replace('\n', '')
-            line = line.decode('unicode-escape')
+            if isinstance(line, bytes):
+                line = line.decode('unicode_escape')
+            else:
+                line = codecs.decode(line, 'unicode_escape')
             emojis.append(line)
     return emojis
 
