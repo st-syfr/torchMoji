@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """ Finetuning functions for doing transfer learning to new datasets.
 """
-from __future__ import print_function
 
 import uuid
 from time import sleep
@@ -15,10 +14,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import accuracy_score
-from torch.autograd import Variable
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.sampler import BatchSampler, SequentialSampler
-from torch.nn.utils import clip_grad_norm
+from torch.nn.utils import clip_grad_norm_
 
 from sklearn.metrics import f1_score
 
@@ -27,13 +25,6 @@ from torchmoji.global_variables import (FINETUNING_METHODS,
                                                WEIGHTS_DIR)
 from torchmoji.tokenizer import tokenize
 from torchmoji.sentence_tokenizer import SentenceTokenizer
-
-try:
-    unicode
-    IS_PYTHON2 = True
-except NameError:
-    unicode = str
-    IS_PYTHON2 = False
 
 
 def load_benchmark(path, vocab, extend_with=0):
@@ -64,16 +55,15 @@ def load_benchmark(path, vocab, extend_with=0):
     """
     # Pre-processing dataset
     with open(path, 'rb') as dataset:
-        if IS_PYTHON2:
-            data = pickle.load(dataset)
-        else:
-            data = pickle.load(dataset, fix_imports=True)
+        data = pickle.load(dataset, fix_imports=True)
 
     # Decode data
-    try:
-        texts = [unicode(x) for x in data['texts']]
-    except UnicodeDecodeError:
-        texts = [x.decode('utf-8') for x in data['texts']]
+    texts = []
+    for entry in data['texts']:
+        if isinstance(entry, bytes):
+            texts.append(entry.decode('utf-8'))
+        else:
+            texts.append(str(entry))
 
     # Extract labels
     labels = [x['label'] for x in data['info']]
@@ -521,31 +511,29 @@ def fit_model(model, loss_op, optim_op, train_gen, val_gen, epochs,
     torch.save(model.state_dict(), checkpoint_path)
 
     model.eval()
-    best_loss = np.mean([calc_loss(loss_op, model(Variable(xv)), Variable(yv)).data.cpu().numpy()[0] for xv, yv in val_gen])
+    best_loss = np.mean([calc_loss(loss_op, model(xv), yv).item() for xv, yv in val_gen])
     print("original val loss", best_loss)
 
     epoch_without_impr = 0
     for epoch in range(epochs):
         for i, data in enumerate(train_gen):
             X_train, y_train = data
-            X_train = Variable(X_train, requires_grad=False)
-            y_train = Variable(y_train, requires_grad=False)
             model.train()
             optim_op.zero_grad()
             output = model(X_train)
             loss = calc_loss(loss_op, output, y_train)
             loss.backward()
-            clip_grad_norm(model.parameters(), 1)
+            clip_grad_norm_(model.parameters(), 1)
             optim_op.step()
 
-            acc = evaluate_using_acc(model, [(X_train.data, y_train.data)])
-            print("== Epoch", epoch, "step", i, "train loss", loss.data.cpu().numpy()[0], "train acc", acc)
+            acc = evaluate_using_acc(model, [(X_train, y_train)])
+            print("== Epoch", epoch, "step", i, "train loss", loss.item(), "train acc", acc)
 
         model.eval()
         acc = evaluate_using_acc(model, val_gen)
         print("val acc", acc)
 
-        val_loss = np.mean([calc_loss(loss_op, model(Variable(xv)), Variable(yv)).data.cpu().numpy()[0] for xv, yv in val_gen])
+        val_loss = np.mean([calc_loss(loss_op, model(xv), yv).item() for xv, yv in val_gen])
         print("val loss", val_loss)
         if best_loss is not None and val_loss >= best_loss:
             epoch_without_impr += 1

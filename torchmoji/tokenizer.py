@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-'''
+''' 
 Splits up a Unicode string into a list of tokens.
 Recognises:
 - Abbreviations
@@ -12,8 +12,6 @@ Recognises:
 
 Multiple consecutive symbols are also treated as a single token.
 '''
-from __future__ import absolute_import, division, print_function, unicode_literals
-
 import re
 
 # Basic patterns.
@@ -36,7 +34,7 @@ TITLES = [
     r'Prof\.',
     ]
 # Ensure case insensitivity
-RE_TITLES = r'|'.join([r'(?i)' + t for t in TITLES])
+RE_TITLES = r'|'.join([r'(?i:{})'.format(t) for t in TITLES])
 
 # Symbols have to be created as separate patterns in order to match consecutive
 # identical symbols.
