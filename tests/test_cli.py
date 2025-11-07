@@ -158,3 +158,112 @@ def test_cli_emojize_emotion_filters(monkeypatch, tmp_path, capsys):
     assert ":neutral_face:" in captured.out
     assert "-> happiness (weak)" in captured.out
     assert "-> neutral" in captured.out
+
+
+def _prepare_vocab_and_weights(tmp_path):
+    vocab_path = tmp_path / "vocab.json"
+    vocab = {"bundle": 1}
+    vocab_path.write_text(json.dumps(vocab), encoding="utf-8")
+
+    weights_path = tmp_path / "weights.bin"
+    weights_path.write_bytes(b"stub")
+    return vocab_path, weights_path
+
+
+def _install_dummy_tokenizer(monkeypatch, expected_vocab, expected_maxlen=None):
+    class DummyTokenizer:
+        def __init__(self, vocabulary, maxlen):
+            self.vocabulary = vocabulary
+            self.maxlen = maxlen
+
+        def tokenize_sentences(self, sentences):
+            return np.zeros((len(sentences), 2), dtype=np.int64), None, None
+
+    def fake_build_tokenizer(vocabulary, maxlen):
+        assert vocabulary == expected_vocab
+        if expected_maxlen is not None:
+            assert maxlen == expected_maxlen
+        return DummyTokenizer(vocabulary, maxlen)
+
+    monkeypatch.setattr(cli, "_build_tokenizer", fake_build_tokenizer)
+
+
+def test_cli_emojize_standard_mode_allows_all_emotions(monkeypatch, tmp_path, capsys):
+    vocab_path, weights_path = _prepare_vocab_and_weights(tmp_path)
+    vocab = json.loads(vocab_path.read_text(encoding="utf-8"))
+    _install_dummy_tokenizer(monkeypatch, vocab)
+
+    class DummyModel:
+        def eval(self):
+            pass
+
+        def __call__(self, tokenized):
+            tensor = torch.zeros((1, len(EMOJI_ALIASES)), dtype=torch.float32)
+            tensor[0, EMOJI_ALIASES.index(":information_desk_person:")] = 0.9
+            tensor[0, EMOJI_ALIASES.index(":see_no_evil:")] = 0.8
+            return tensor
+
+    monkeypatch.setattr(cli, "_load_model", lambda path: DummyModel())
+
+    exit_code = cli.main(
+        [
+            "emojize",
+            "bundle",
+            "--vocab",
+            str(vocab_path),
+            "--weights",
+            str(weights_path),
+            "--mode",
+            "standard",
+            "--top-k",
+            "2",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "-> contempt (strong)" in captured.out
+    assert "-> surprise (weak)" in captured.out
+
+
+def test_cli_emojize_simple_mode_limits_emotions(monkeypatch, tmp_path, capsys):
+    vocab_path, weights_path = _prepare_vocab_and_weights(tmp_path)
+    vocab = json.loads(vocab_path.read_text(encoding="utf-8"))
+    _install_dummy_tokenizer(monkeypatch, vocab)
+
+    class DummyModel:
+        def eval(self):
+            pass
+
+        def __call__(self, tokenized):
+            tensor = torch.zeros((1, len(EMOJI_ALIASES)), dtype=torch.float32)
+            tensor[0, EMOJI_ALIASES.index(":information_desk_person:")] = 0.9
+            tensor[0, EMOJI_ALIASES.index(":see_no_evil:")] = 0.8
+            tensor[0, EMOJI_ALIASES.index(":rage:")] = 0.7
+            tensor[0, EMOJI_ALIASES.index(":mask:")] = 0.6
+            return tensor
+
+    monkeypatch.setattr(cli, "_load_model", lambda path: DummyModel())
+
+    exit_code = cli.main(
+        [
+            "emojize",
+            "bundle",
+            "--vocab",
+            str(vocab_path),
+            "--weights",
+            str(weights_path),
+            "--mode",
+            "simple",
+            "--top-k",
+            "4",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "-> happiness (weak)" in captured.out
+    assert "-> fear (strong)" in captured.out
+    assert "-> anger (strong)" in captured.out
+    assert "-> contempt" not in captured.out
+    assert "-> surprise" not in captured.out
