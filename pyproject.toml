@@ -29,6 +29,9 @@ test = [
     "pytest>=7",
 ]
 
+[project.scripts]
+torchmoji = "torchmoji.cli:main"
+
 [tool.setuptools]
 include-package-data = true
 

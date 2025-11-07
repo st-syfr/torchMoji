@@ -188,11 +188,17 @@ class TorchMoji(nn.Module):
         # If we don't have a packed inputs, let's pack it
         reorder_output = False
         if not isinstance(input_seqs, PackedSequence):
-            ho = self.lstm_0.weight_hh_l0.data.new(2, input_seqs.size()[0], self.hidden_size).zero_()
-            co = self.lstm_0.weight_hh_l0.data.new(2, input_seqs.size()[0], self.hidden_size).zero_()
+            weight = self.lstm_0.weight_hh_l0
+            ho = weight.new_zeros(2, input_seqs.size()[0], self.hidden_size)
+            co = weight.new_zeros(2, input_seqs.size()[0], self.hidden_size)
 
             # Reorder batch by sequence length
-            input_lengths = torch.LongTensor([torch.max(input_seqs[i, :].data.nonzero()) + 1 for i in range(input_seqs.size()[0])])
+            input_lengths = []
+            for i in range(input_seqs.size(0)):
+                nonzero_idx = input_seqs[i, :].detach().nonzero(as_tuple=False)
+                length = nonzero_idx.max().item() + 1 if nonzero_idx.numel() > 0 else 0
+                input_lengths.append(length)
+            input_lengths = torch.LongTensor(input_lengths)
             input_lengths, perm_idx = input_lengths.sort(0, descending=True)
             input_seqs = input_seqs[perm_idx][:, :input_lengths.max()]
 
@@ -200,8 +206,9 @@ class TorchMoji(nn.Module):
             packed_input = pack_padded_sequence(input_seqs, input_lengths.cpu().numpy(), batch_first=True)
             reorder_output = True
         else:
-            ho = self.lstm_0.weight_hh_l0.data.data.new(2, input_seqs.size()[0], self.hidden_size).zero_()
-            co = self.lstm_0.weight_hh_l0.data.data.new(2, input_seqs.size()[0], self.hidden_size).zero_()
+            weight = self.lstm_0.weight_hh_l0
+            ho = weight.new_zeros(2, input_seqs.size()[0], self.hidden_size)
+            co = weight.new_zeros(2, input_seqs.size()[0], self.hidden_size)
             input_lengths = input_seqs.batch_sizes
             packed_input = input_seqs
 
@@ -246,15 +253,14 @@ class TorchMoji(nn.Module):
 
         # Reorder output if needed
         if reorder_output:
-            reorered = Variable(outputs.data.new(outputs.size()))
-            reorered[perm_idx] = outputs
-            outputs = reorered
+            inv_perm_idx = perm_idx.argsort()
+            outputs = outputs[inv_perm_idx]
 
         # Adapt return format if needed
-        if return_tensor:
-            outputs = outputs.data
+        if return_tensor and not self.training:
+            outputs = outputs.detach()
         if return_numpy:
-            outputs = outputs.data.numpy()
+            outputs = outputs.detach().cpu().numpy()
 
         if self.return_attention:
             return outputs, att_weights

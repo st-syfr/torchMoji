@@ -51,6 +51,16 @@ Then, run the download script to downloads the pretrained torchMoji weights (~85
 python scripts/download_weights.py
 ```
 
+## Command line interface
+
+After installing the project in editable mode (``pip install -e .``) you can interact with the model from your terminal using the ``torchmoji`` command. For example, to see the top emoji predictions for a sentence:
+
+```bash
+torchmoji emojize "It was the best concert ever!" --top-k 3 --scores
+```
+
+By default the CLI looks for the vocabulary and pretrained weights inside the ``model/`` directory. Use ``--vocab`` and ``--weights`` to point to custom locations if you have stored them elsewhere. The command will explain how to download the weights if it cannot find them locally.
+
 ## Testing
 To run the test suite with Python 3.10+, install [pytest](https://docs.pytest.org/) in your environment:
 
