@@ -1,8 +1,9 @@
 """Emoji aliases and Ekman emotion metadata for the TorchMoji model."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from typing import Dict, Iterable, Iterator, Sequence
+from typing import Dict, Iterable, Iterator, Mapping, Sequence
 
 EMOJI_ALIASES = [
     ":joy:",
@@ -92,6 +93,7 @@ class EmotionRanking:
 
     emotion: str
     intensity: str | None = None
+    weight: float | None = None
 
     def __post_init__(self) -> None:
         if self.emotion not in EmotionName:
@@ -99,688 +101,477 @@ class EmotionRanking:
         if self.emotion == "neutral":
             if self.intensity is not None:
                 raise ValueError("Neutral emotion cannot have an intensity.")
-            return
-        if self.intensity not in {"flat", "weak", "strong"}:
+        elif self.intensity not in {"flat", "weak", "strong"}:
             raise ValueError(f"Invalid intensity '{self.intensity}'.")
+        if self.weight is not None and not (0.0 <= self.weight <= 1.0):
+            raise ValueError("Emotion weights must fall within the [0, 1] range.")
 
 
-def _apply_intensity_scheme(rankings: Sequence[EmotionRanking]) -> tuple[EmotionRanking, ...]:
-    """Assign flat/weak/strong intensities based on relative ranking order."""
+EmotionWeights = Mapping[str, float]
 
-    result: list[EmotionRanking] = []
-    non_neutral_seen = 0
-    for ranking in rankings:
-        if ranking.emotion == "neutral":
-            result.append(EmotionRanking("neutral", None))
+
+def _validate_weights(weights: EmotionWeights) -> dict[str, float]:
+    """Normalise and validate emotion weight mappings."""
+
+    missing = [emotion for emotion in EmotionName if emotion not in weights]
+    if missing:
+        raise ValueError(
+            f"Emotion weight definition is missing: {', '.join(sorted(missing))}."
+        )
+
+    normalised = {emotion: float(weight) for emotion, weight in weights.items()}
+    total = sum(normalised.values())
+    if not math.isclose(total, 1.0, rel_tol=1e-6, abs_tol=1e-6):
+        raise ValueError(
+            f"Emotion weights must sum to 1.0, received {total:.6f}."
+        )
+
+    for emotion, weight in normalised.items():
+        if weight < 0.0:
+            raise ValueError(
+                f"Emotion '{emotion}' has a negative weight ({weight:.6f})."
+            )
+
+    return normalised
+
+
+def _intensity_from_weight(weight: float) -> str:
+    if weight >= 0.45:
+        return "strong"
+    if weight >= 0.18:
+        return "weak"
+    return "flat"
+
+
+def _build_rankings(weights: EmotionWeights) -> tuple[EmotionRanking, ...]:
+    """Convert a weight distribution into ordered emotion rankings."""
+
+    normalised = _validate_weights(weights)
+    ordered = sorted(normalised.items(), key=lambda item: item[1], reverse=True)
+
+    rankings: list[EmotionRanking] = []
+    strong_found = False
+    weak_found = False
+
+    for emotion, weight in ordered:
+        if emotion == "neutral":
+            rankings.append(EmotionRanking(emotion, None, weight))
             continue
 
-        non_neutral_seen += 1
-        if non_neutral_seen <= 2:
-            intensity = ranking.intensity if ranking.intensity is not None else "weak"
-        else:
-            intensity = "flat"
-        result.append(EmotionRanking(ranking.emotion, intensity))
-    return tuple(result)
+        intensity = _intensity_from_weight(weight)
+        if intensity == "strong":
+            strong_found = True
+        elif intensity == "weak":
+            weak_found = True
+        rankings.append(EmotionRanking(emotion, intensity, weight))
+
+    for index, ranking in enumerate(rankings):
+        if ranking.emotion == "neutral":
+            continue
+        if not strong_found:
+            rankings[index] = EmotionRanking(ranking.emotion, "strong", ranking.weight)
+            strong_found = True
+        elif not weak_found and ranking.intensity == "flat":
+            rankings[index] = EmotionRanking(ranking.emotion, "weak", ranking.weight)
+            weak_found = True
+        if strong_found and weak_found:
+            break
+
+    return tuple(rankings)
 
 
-def _ranking(
-    *rankings: tuple[str, str | None] | EmotionRanking,
-) -> tuple[EmotionRanking, ...]:
-    ordered: list[EmotionRanking] = []
-    seen: set[str] = set()
-    for value in rankings:
-        ranking = value if isinstance(value, EmotionRanking) else EmotionRanking(*value)
-        if ranking.emotion in seen:
-            raise ValueError(f"Duplicate emotion '{ranking.emotion}' in ranking.")
-        seen.add(ranking.emotion)
-        ordered.append(ranking)
-    missing = {emotion for emotion in EmotionName if emotion not in seen}
-    if missing:
-        raise ValueError(f"Missing emotions in ranking: {', '.join(sorted(missing))}.")
-    return _apply_intensity_scheme(ordered)
+EMOTION_WEIGHT_TEMPLATES: Dict[str, Dict[str, float]] = {
+    "joy_hysterical": {
+        "happiness": 0.58,
+        "sadness": 0.04,
+        "fear": 0.03,
+        "disgust": 0.04,
+        "anger": 0.04,
+        "surprise": 0.18,
+        "contempt": 0.04,
+        "neutral": 0.05,
+    },
+    "joy_playful": {
+        "happiness": 0.50,
+        "sadness": 0.04,
+        "fear": 0.03,
+        "disgust": 0.04,
+        "anger": 0.04,
+        "surprise": 0.20,
+        "contempt": 0.10,
+        "neutral": 0.05,
+    },
+    "joy_content": {
+        "happiness": 0.55,
+        "sadness": 0.05,
+        "fear": 0.04,
+        "disgust": 0.03,
+        "anger": 0.03,
+        "surprise": 0.10,
+        "contempt": 0.05,
+        "neutral": 0.15,
+    },
+    "joy_relief": {
+        "happiness": 0.45,
+        "sadness": 0.04,
+        "fear": 0.20,
+        "disgust": 0.03,
+        "anger": 0.03,
+        "surprise": 0.15,
+        "contempt": 0.02,
+        "neutral": 0.08,
+    },
+    "love_romantic": {
+        "happiness": 0.60,
+        "sadness": 0.05,
+        "fear": 0.03,
+        "disgust": 0.02,
+        "anger": 0.02,
+        "surprise": 0.15,
+        "contempt": 0.03,
+        "neutral": 0.10,
+    },
+    "gratitude_hope": {
+        "happiness": 0.40,
+        "sadness": 0.12,
+        "fear": 0.12,
+        "disgust": 0.05,
+        "anger": 0.06,
+        "surprise": 0.08,
+        "contempt": 0.07,
+        "neutral": 0.10,
+    },
+    "broken_heart": {
+        "happiness": 0.04,
+        "sadness": 0.60,
+        "fear": 0.12,
+        "disgust": 0.06,
+        "anger": 0.10,
+        "surprise": 0.04,
+        "contempt": 0.02,
+        "neutral": 0.02,
+    },
+    "sadness_intense": {
+        "happiness": 0.03,
+        "sadness": 0.58,
+        "fear": 0.18,
+        "disgust": 0.05,
+        "anger": 0.06,
+        "surprise": 0.05,
+        "contempt": 0.02,
+        "neutral": 0.03,
+    },
+    "sadness_melancholy": {
+        "happiness": 0.05,
+        "sadness": 0.45,
+        "fear": 0.15,
+        "disgust": 0.05,
+        "anger": 0.08,
+        "surprise": 0.05,
+        "contempt": 0.05,
+        "neutral": 0.12,
+    },
+    "sadness_exhausted": {
+        "happiness": 0.04,
+        "sadness": 0.50,
+        "fear": 0.18,
+        "disgust": 0.05,
+        "anger": 0.08,
+        "surprise": 0.04,
+        "contempt": 0.04,
+        "neutral": 0.07,
+    },
+    "tired_neutral": {
+        "happiness": 0.08,
+        "sadness": 0.20,
+        "fear": 0.08,
+        "disgust": 0.05,
+        "anger": 0.04,
+        "surprise": 0.07,
+        "contempt": 0.03,
+        "neutral": 0.45,
+    },
+    "sarcasm_disdain": {
+        "happiness": 0.07,
+        "sadness": 0.05,
+        "fear": 0.03,
+        "disgust": 0.12,
+        "anger": 0.18,
+        "surprise": 0.05,
+        "contempt": 0.45,
+        "neutral": 0.05,
+    },
+    "sarcasm_side_eye": {
+        "happiness": 0.04,
+        "sadness": 0.12,
+        "fear": 0.04,
+        "disgust": 0.08,
+        "anger": 0.12,
+        "surprise": 0.05,
+        "contempt": 0.35,
+        "neutral": 0.20,
+    },
+    "cool_confident": {
+        "happiness": 0.40,
+        "sadness": 0.05,
+        "fear": 0.04,
+        "disgust": 0.05,
+        "anger": 0.06,
+        "surprise": 0.10,
+        "contempt": 0.20,
+        "neutral": 0.10,
+    },
+    "celebration": {
+        "happiness": 0.52,
+        "sadness": 0.03,
+        "fear": 0.03,
+        "disgust": 0.04,
+        "anger": 0.07,
+        "surprise": 0.20,
+        "contempt": 0.05,
+        "neutral": 0.06,
+    },
+    "positive_gesture": {
+        "happiness": 0.48,
+        "sadness": 0.05,
+        "fear": 0.04,
+        "disgust": 0.04,
+        "anger": 0.05,
+        "surprise": 0.12,
+        "contempt": 0.04,
+        "neutral": 0.18,
+    },
+    "music": {
+        "happiness": 0.50,
+        "sadness": 0.05,
+        "fear": 0.04,
+        "disgust": 0.03,
+        "anger": 0.03,
+        "surprise": 0.15,
+        "contempt": 0.05,
+        "neutral": 0.15,
+    },
+    "attention": {
+        "happiness": 0.16,
+        "sadness": 0.04,
+        "fear": 0.05,
+        "disgust": 0.03,
+        "anger": 0.08,
+        "surprise": 0.32,
+        "contempt": 0.20,
+        "neutral": 0.12,
+    },
+    "surprise_embarrassed": {
+        "happiness": 0.12,
+        "sadness": 0.08,
+        "fear": 0.20,
+        "disgust": 0.07,
+        "anger": 0.05,
+        "surprise": 0.35,
+        "contempt": 0.05,
+        "neutral": 0.08,
+    },
+    "surprise_shock": {
+        "happiness": 0.04,
+        "sadness": 0.10,
+        "fear": 0.30,
+        "disgust": 0.15,
+        "anger": 0.07,
+        "surprise": 0.25,
+        "contempt": 0.04,
+        "neutral": 0.05,
+    },
+    "confusion": {
+        "happiness": 0.08,
+        "sadness": 0.15,
+        "fear": 0.15,
+        "disgust": 0.07,
+        "anger": 0.07,
+        "surprise": 0.30,
+        "contempt": 0.08,
+        "neutral": 0.10,
+    },
+    "struggle": {
+        "happiness": 0.03,
+        "sadness": 0.38,
+        "fear": 0.25,
+        "disgust": 0.08,
+        "anger": 0.12,
+        "surprise": 0.06,
+        "contempt": 0.03,
+        "neutral": 0.05,
+    },
+    "sick": {
+        "happiness": 0.05,
+        "sadness": 0.15,
+        "fear": 0.20,
+        "disgust": 0.30,
+        "anger": 0.08,
+        "surprise": 0.07,
+        "contempt": 0.05,
+        "neutral": 0.10,
+    },
+    "skull_laugh": {
+        "happiness": 0.50,
+        "sadness": 0.03,
+        "fear": 0.03,
+        "disgust": 0.02,
+        "anger": 0.05,
+        "surprise": 0.20,
+        "contempt": 0.12,
+        "neutral": 0.05,
+    },
+    "anger_fury": {
+        "happiness": 0.01,
+        "sadness": 0.04,
+        "fear": 0.05,
+        "disgust": 0.18,
+        "anger": 0.55,
+        "surprise": 0.03,
+        "contempt": 0.12,
+        "neutral": 0.02,
+    },
+    "anger_frustrated": {
+        "happiness": 0.03,
+        "sadness": 0.08,
+        "fear": 0.10,
+        "disgust": 0.12,
+        "anger": 0.45,
+        "surprise": 0.05,
+        "contempt": 0.15,
+        "neutral": 0.02,
+    },
+    "determined": {
+        "happiness": 0.32,
+        "sadness": 0.03,
+        "fear": 0.04,
+        "disgust": 0.03,
+        "anger": 0.28,
+        "surprise": 0.12,
+        "contempt": 0.10,
+        "neutral": 0.08,
+    },
+    "dark_frustration": {
+        "happiness": 0.03,
+        "sadness": 0.30,
+        "fear": 0.15,
+        "disgust": 0.10,
+        "anger": 0.25,
+        "surprise": 0.07,
+        "contempt": 0.05,
+        "neutral": 0.05,
+    },
+    "refusal": {
+        "happiness": 0.03,
+        "sadness": 0.08,
+        "fear": 0.05,
+        "disgust": 0.32,
+        "anger": 0.25,
+        "surprise": 0.06,
+        "contempt": 0.18,
+        "neutral": 0.03,
+    },
+    "mischief": {
+        "happiness": 0.35,
+        "sadness": 0.05,
+        "fear": 0.04,
+        "disgust": 0.04,
+        "anger": 0.10,
+        "surprise": 0.12,
+        "contempt": 0.22,
+        "neutral": 0.08,
+    },
+}
 
+_EMOJI_TO_TEMPLATE: Dict[str, str] = {
+    ":joy:": "joy_hysterical",
+    ":unamused:": "sarcasm_disdain",
+    ":weary:": "sadness_exhausted",
+    ":sob:": "sadness_intense",
+    ":heart_eyes:": "love_romantic",
+    ":pensive:": "sadness_melancholy",
+    ":ok_hand:": "positive_gesture",
+    ":blush:": "joy_content",
+    ":heart:": "love_romantic",
+    ":smirk:": "sarcasm_disdain",
+    ":grin:": "joy_hysterical",
+    ":notes:": "music",
+    ":flushed:": "surprise_embarrassed",
+    ":100:": "celebration",
+    ":sleeping:": "tired_neutral",
+    ":relieved:": "joy_relief",
+    ":relaxed:": "joy_content",
+    ":raised_hands:": "celebration",
+    ":two_hearts:": "love_romantic",
+    ":expressionless:": "sarcasm_side_eye",
+    ":sweat_smile:": "joy_relief",
+    ":pray:": "gratitude_hope",
+    ":confused:": "confusion",
+    ":kissing_heart:": "love_romantic",
+    ":heartbeat:": "love_romantic",
+    ":neutral_face:": "sarcasm_side_eye",
+    ":information_desk_person:": "sarcasm_disdain",
+    ":disappointed:": "sadness_melancholy",
+    ":see_no_evil:": "surprise_embarrassed",
+    ":tired_face:": "sadness_exhausted",
+    ":v:": "positive_gesture",
+    ":sunglasses:": "cool_confident",
+    ":rage:": "anger_fury",
+    ":thumbsup:": "positive_gesture",
+    ":cry:": "sadness_intense",
+    ":sleepy:": "tired_neutral",
+    ":yum:": "joy_content",
+    ":triumph:": "anger_frustrated",
+    ":hand:": "positive_gesture",
+    ":mask:": "sick",
+    ":clap:": "celebration",
+    ":eyes:": "attention",
+    ":gun:": "dark_frustration",
+    ":persevere:": "struggle",
+    ":smiling_imp:": "mischief",
+    ":sweat:": "struggle",
+    ":broken_heart:": "broken_heart",
+    ":yellow_heart:": "love_romantic",
+    ":musical_note:": "music",
+    ":speak_no_evil:": "surprise_embarrassed",
+    ":wink:": "joy_playful",
+    ":skull:": "skull_laugh",
+    ":confounded:": "struggle",
+    ":smile:": "joy_content",
+    ":stuck_out_tongue_winking_eye:": "joy_playful",
+    ":angry:": "anger_fury",
+    ":no_good:": "refusal",
+    ":muscle:": "determined",
+    ":facepunch:": "anger_frustrated",
+    ":purple_heart:": "love_romantic",
+    ":sparkling_heart:": "love_romantic",
+    ":blue_heart:": "love_romantic",
+    ":grimacing:": "surprise_shock",
+    ":sparkles:": "celebration",
+}
+
+_NORMALISED_TEMPLATES = {
+    name: _validate_weights(weights)
+    for name, weights in EMOTION_WEIGHT_TEMPLATES.items()
+}
+
+EMOJI_EMOTION_WEIGHTS: Dict[str, Dict[str, float]] = {}
+for alias in EMOJI_ALIASES:
+    template_name = _EMOJI_TO_TEMPLATE.get(alias)
+    if template_name is None:
+        raise ValueError(f"Missing emotion template for alias '{alias}'.")
+    EMOJI_EMOTION_WEIGHTS[alias] = dict(_NORMALISED_TEMPLATES[template_name])
+
+_missing_aliases = set(EMOJI_ALIASES) - set(EMOJI_EMOTION_WEIGHTS)
+if _missing_aliases:
+    raise ValueError(
+        "Emotion weight mapping does not cover every emoji alias: "
+        + ", ".join(sorted(_missing_aliases))
+    )
 
 EMOJI_EMOTION_RANKS: Dict[str, tuple[EmotionRanking, ...]] = {
-    ":joy:": _ranking(
-        ("happiness", "strong"),
-        ("surprise", "strong"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":unamused:": _ranking(
-        ("contempt", "strong"),
-        ("anger", "weak"),
-        ("disgust", "weak"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("surprise", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":weary:": _ranking(
-        ("sadness", "strong"),
-        ("fear", "strong"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":sob:": _ranking(
-        ("sadness", "strong"),
-        ("fear", "strong"),
-        ("anger", "weak"),
-        ("disgust", "weak"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":heart_eyes:": _ranking(
-        ("happiness", "strong"),
-        ("surprise", "strong"),
-        ("neutral", None),
-        ("contempt", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-    ),
-    ":pensive:": _ranking(
-        ("sadness", "weak"),
-        ("neutral", None),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("happiness", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-        ("surprise", "weak"),
-    ),
-    ":ok_hand:": _ranking(
-        ("happiness", "weak"),
-        ("neutral", None),
-        ("surprise", "weak"),
-        ("contempt", "weak"),
-        ("anger", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-    ),
-    ":blush:": _ranking(
-        ("happiness", "weak"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("contempt", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-    ),
-    ":heart:": _ranking(
-        ("happiness", "strong"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("surprise", "weak"),
-        ("contempt", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-    ),
-    ":smirk:": _ranking(
-        ("contempt", "strong"),
-        ("happiness", "weak"),
-        ("anger", "weak"),
-        ("disgust", "weak"),
-        ("neutral", None),
-        ("surprise", "weak"),
-        ("fear", "weak"),
-        ("sadness", "weak"),
-    ),
-    ":grin:": _ranking(
-        ("happiness", "strong"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("contempt", "weak"),
-        ("anger", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("sadness", "weak"),
-    ),
-    ":notes:": _ranking(
-        ("happiness", "weak"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("contempt", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-    ),
-    ":flushed:": _ranking(
-        ("surprise", "strong"),
-        ("fear", "strong"),
-        ("happiness", "weak"),
-        ("sadness", "weak"),
-        ("neutral", None),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":100:": _ranking(
-        ("happiness", "strong"),
-        ("anger", "strong"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("contempt", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-    ),
-    ":sleeping:": _ranking(
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("happiness", "weak"),
-        ("fear", "weak"),
-        ("surprise", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":relieved:": _ranking(
-        ("happiness", "weak"),
-        ("neutral", None),
-        ("surprise", "weak"),
-        ("fear", "weak"),
-        ("sadness", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":relaxed:": _ranking(
-        ("happiness", "weak"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("surprise", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":raised_hands:": _ranking(
-        ("happiness", "strong"),
-        ("surprise", "strong"),
-        ("neutral", None),
-        ("anger", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":two_hearts:": _ranking(
-        ("happiness", "strong"),
-        ("neutral", None),
-        ("surprise", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":expressionless:": _ranking(
-        ("neutral", None),
-        ("contempt", "weak"),
-        ("sadness", "weak"),
-        ("anger", "weak"),
-        ("disgust", "weak"),
-        ("fear", "weak"),
-        ("surprise", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":sweat_smile:": _ranking(
-        ("happiness", "weak"),
-        ("surprise", "weak"),
-        ("fear", "weak"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":pray:": _ranking(
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("happiness", "weak"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":confused:": _ranking(
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("neutral", None),
-        ("surprise", "weak"),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":kissing_heart:": _ranking(
-        ("happiness", "weak"),
-        ("neutral", None),
-        ("surprise", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":heartbeat:": _ranking(
-        ("happiness", "strong"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("surprise", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":neutral_face:": _ranking(
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("contempt", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("happiness", "weak"),
-        ("surprise", "weak"),
-    ),
-    ":information_desk_person:": _ranking(
-        ("contempt", "strong"),
-        ("happiness", "weak"),
-        ("neutral", None),
-        ("anger", "weak"),
-        ("disgust", "weak"),
-        ("surprise", "weak"),
-        ("fear", "weak"),
-        ("sadness", "weak"),
-    ),
-    ":disappointed:": _ranking(
-        ("sadness", "strong"),
-        ("neutral", None),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("surprise", "weak"),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":see_no_evil:": _ranking(
-        ("surprise", "weak"),
-        ("fear", "strong"),
-        ("happiness", "weak"),
-        ("sadness", "weak"),
-        ("neutral", None),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":tired_face:": _ranking(
-        ("sadness", "strong"),
-        ("neutral", None),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("surprise", "weak"),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":v:": _ranking(
-        ("happiness", "weak"),
-        ("neutral", None),
-        ("surprise", "weak"),
-        ("anger", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":sunglasses:": _ranking(
-        ("happiness", "weak"),
-        ("contempt", "strong"),
-        ("neutral", None),
-        ("anger", "weak"),
-        ("surprise", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-    ),
-    ":rage:": _ranking(
-        ("anger", "strong"),
-        ("disgust", "strong"),
-        ("contempt", "strong"),
-        ("fear", "weak"),
-        ("surprise", "weak"),
-        ("sadness", "weak"),
-        ("happiness", "weak"),
-        ("neutral", None),
-    ),
-    ":thumbsup:": _ranking(
-        ("happiness", "weak"),
-        ("neutral", None),
-        ("contempt", "weak"),
-        ("surprise", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-    ),
-    ":cry:": _ranking(
-        ("sadness", "strong"),
-        ("fear", "strong"),
-        ("neutral", None),
-        ("anger", "weak"),
-        ("surprise", "weak"),
-        ("disgust", "weak"),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":sleepy:": _ranking(
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("surprise", "weak"),
-        ("happiness", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":yum:": _ranking(
-        ("happiness", "weak"),
-        ("surprise", "weak"),
-        ("disgust", "weak"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":triumph:": _ranking(
-        ("anger", "strong"),
-        ("happiness", "strong"),
-        ("contempt", "strong"),
-        ("surprise", "weak"),
-        ("disgust", "weak"),
-        ("fear", "weak"),
-        ("sadness", "weak"),
-        ("neutral", None),
-    ),
-    ":hand:": _ranking(
-        ("neutral", None),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-        ("disgust", "weak"),
-        ("surprise", "weak"),
-        ("happiness", "weak"),
-        ("fear", "weak"),
-        ("sadness", "weak"),
-    ),
-    ":mask:": _ranking(
-        ("fear", "strong"),
-        ("disgust", "strong"),
-        ("sadness", "weak"),
-        ("neutral", None),
-        ("anger", "weak"),
-        ("surprise", "weak"),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":clap:": _ranking(
-        ("happiness", "strong"),
-        ("surprise", "strong"),
-        ("neutral", None),
-        ("contempt", "weak"),
-        ("anger", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-    ),
-    ":eyes:": _ranking(
-        ("surprise", "weak"),
-        ("fear", "weak"),
-        ("neutral", None),
-        ("anger", "weak"),
-        ("disgust", "weak"),
-        ("contempt", "weak"),
-        ("sadness", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":gun:": _ranking(
-        ("anger", "strong"),
-        ("fear", "strong"),
-        ("disgust", "strong"),
-        ("contempt", "strong"),
-        ("surprise", "weak"),
-        ("sadness", "weak"),
-        ("neutral", None),
-        ("happiness", "weak"),
-    ),
-    ":persevere:": _ranking(
-        ("sadness", "strong"),
-        ("anger", "weak"),
-        ("fear", "weak"),
-        ("neutral", None),
-        ("disgust", "weak"),
-        ("surprise", "weak"),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":smiling_imp:": _ranking(
-        ("anger", "strong"),
-        ("contempt", "strong"),
-        ("happiness", "weak"),
-        ("disgust", "weak"),
-        ("surprise", "weak"),
-        ("fear", "weak"),
-        ("sadness", "weak"),
-        ("neutral", None),
-    ),
-    ":sweat:": _ranking(
-        ("fear", "weak"),
-        ("surprise", "weak"),
-        ("sadness", "weak"),
-        ("neutral", None),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":broken_heart:": _ranking(
-        ("sadness", "strong"),
-        ("anger", "strong"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("contempt", "weak"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("happiness", "weak"),
-    ),
-    ":yellow_heart:": _ranking(
-        ("happiness", "weak"),
-        ("neutral", None),
-        ("surprise", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":musical_note:": _ranking(
-        ("happiness", "weak"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("contempt", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-    ),
-    ":speak_no_evil:": _ranking(
-        ("fear", "strong"),
-        ("surprise", "weak"),
-        ("sadness", "weak"),
-        ("neutral", None),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":wink:": _ranking(
-        ("happiness", "weak"),
-        ("contempt", "strong"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("anger", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-    ),
-    ":skull:": _ranking(
-        ("fear", "strong"),
-        ("sadness", "strong"),
-        ("disgust", "strong"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("happiness", "weak"),
-    ),
-    ":confounded:": _ranking(
-        ("sadness", "strong"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":smile:": _ranking(
-        ("happiness", "weak"),
-        ("neutral", None),
-        ("surprise", "weak"),
-        ("contempt", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-    ),
-    ":stuck_out_tongue_winking_eye:": _ranking(
-        ("happiness", "strong"),
-        ("surprise", "strong"),
-        ("contempt", "strong"),
-        ("neutral", None),
-        ("anger", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("sadness", "weak"),
-    ),
-    ":angry:": _ranking(
-        ("anger", "strong"),
-        ("disgust", "strong"),
-        ("contempt", "strong"),
-        ("fear", "weak"),
-        ("sadness", "weak"),
-        ("surprise", "weak"),
-        ("happiness", "weak"),
-        ("neutral", None),
-    ),
-    ":no_good:": _ranking(
-        ("disgust", "strong"),
-        ("anger", "strong"),
-        ("contempt", "strong"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("happiness", "weak"),
-    ),
-    ":muscle:": _ranking(
-        ("happiness", "strong"),
-        ("anger", "strong"),
-        ("contempt", "strong"),
-        ("neutral", None),
-        ("surprise", "weak"),
-        ("fear", "weak"),
-        ("sadness", "weak"),
-        ("disgust", "weak"),
-    ),
-    ":facepunch:": _ranking(
-        ("anger", "strong"),
-        ("contempt", "strong"),
-        ("fear", "strong"),
-        ("disgust", "strong"),
-        ("surprise", "weak"),
-        ("sadness", "weak"),
-        ("neutral", None),
-        ("happiness", "weak"),
-    ),
-    ":purple_heart:": _ranking(
-        ("happiness", "weak"),
-        ("neutral", None),
-        ("surprise", "weak"),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":sparkling_heart:": _ranking(
-        ("happiness", "strong"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":blue_heart:": _ranking(
-        ("happiness", "weak"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("surprise", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
-    ":grimacing:": _ranking(
-        ("fear", "strong"),
-        ("surprise", "strong"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("sadness", "weak"),
-        ("neutral", None),
-        ("contempt", "weak"),
-        ("happiness", "weak"),
-    ),
-    ":sparkles:": _ranking(
-        ("happiness", "weak"),
-        ("surprise", "weak"),
-        ("neutral", None),
-        ("sadness", "weak"),
-        ("fear", "weak"),
-        ("disgust", "weak"),
-        ("anger", "weak"),
-        ("contempt", "weak"),
-    ),
+    alias: _build_rankings(weights)
+    for alias, weights in EMOJI_EMOTION_WEIGHTS.items()
 }
 
 
@@ -859,6 +650,8 @@ __all__ = [
     "EmotionRanking",
     "EmotionName",
     "NonNeutralEmotionName",
+    "EMOTION_WEIGHT_TEMPLATES",
+    "EMOJI_EMOTION_WEIGHTS",
     "EMOJI_EMOTION_RANKS",
     "filter_emojis_by_emotion",
     "get_emotion_rankings",
