@@ -3,8 +3,9 @@
 This automates the manual steps documented in the repository by:
 * ensuring the pretrained model assets are available;
 * generating the PyInstaller spec file for the GUI application; and
-* patching the spec so the frozen binary bundles the model data and Torch
-  dynamic libraries before producing the final executable.
+* patching the spec so the frozen binary bundles the model data, GUI components
+  (PySide6), API components (Flask), and Torch dynamic libraries before
+  producing the final executable.
 
 Usage::
 
@@ -111,6 +112,8 @@ def generate_spec_file() -> None:
             "emoji",
             "--collect-all",
             "PySide6",
+            "--collect-all",
+            "flask",
         ]
     )
 
