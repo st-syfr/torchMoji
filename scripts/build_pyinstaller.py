@@ -124,28 +124,37 @@ def patch_spec_file() -> None:
         text = "from PyInstaller.utils.hooks import collect_dynamic_libs\n" + text
         changed = True
 
-    datas_pattern = re.compile(r"datas\s*=\s*\[\s*\]\s*,?")
-    datas_replacement = (
-        "datas = [\n"
-        "    (\"model/vocabulary.json\", \"model\"),\n"
-        "    (\"model/pytorch_model.bin\", \"model\"),\n"
-        "]\n"
-    )
+    # Add model files to datas list by appending after existing entries
     if "model/vocabulary.json" not in text:
-        text, count = datas_pattern.subn(datas_replacement, text, count=1)
-        if count == 0:
-            raise SystemExit("Failed to patch datas section in spec file.")
+        # Find where to insert model datas - look for the line before Analysis(
+        analysis_pattern = re.compile(r"\n(a = Analysis\()")
+        match = analysis_pattern.search(text)
+        if not match:
+            raise SystemExit("Failed to locate Analysis section in spec file.")
+        
+        datas_addition = (
+            "datas += [\n"
+            "    (\"model/vocabulary.json\", \"model\"),\n"
+            "    (\"model/pytorch_model.bin\", \"model\"),\n"
+            "]\n"
+        )
+        # Insert before the Analysis line
+        insert_pos = match.start()
+        text = text[:insert_pos] + "\n" + datas_addition + text[insert_pos:]
         changed = True
 
-    binaries_pattern = re.compile(r"binaries\s*=\s*\[\s*\]\s*,?")
+    # Add torch dynamic libs to binaries list by appending after existing entries
     if "collect_dynamic_libs(\"torch\")" not in text:
-        text, count = binaries_pattern.subn(
-            'binaries = collect_dynamic_libs("torch")\n',
-            text,
-            count=1,
-        )
-        if count == 0:
-            raise SystemExit("Failed to patch binaries section in spec file.")
+        # Find where to insert torch binaries - look for the line before Analysis(
+        analysis_pattern = re.compile(r"\n(a = Analysis\()")
+        match = analysis_pattern.search(text)
+        if not match:
+            raise SystemExit("Failed to locate Analysis section in spec file.")
+        
+        binaries_addition = 'binaries += collect_dynamic_libs("torch")\n'
+        # Insert before the Analysis line
+        insert_pos = match.start()
+        text = text[:insert_pos] + "\n" + binaries_addition + text[insert_pos:]
         changed = True
 
     if changed:
