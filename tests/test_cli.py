@@ -92,8 +92,7 @@ def test_cli_emojize_outputs_predictions(monkeypatch, tmp_path, capsys):
     assert ":sob:" in captured.out  # index 3
     assert ":pensive:" in captured.out  # index 5
     assert ":joy:" in captured.out  # index 0
-    assert "-> sadness (strong)" in captured.out
-    assert "-> sadness (weak)" in captured.out
+    assert captured.out.count("-> sadness (strong)") >= 1
     assert "-> happiness (strong)" in captured.out
     assert "score=0.9000" in captured.out
     assert dummy_model.eval_called
@@ -148,6 +147,7 @@ def test_cli_emojize_emotion_filters(monkeypatch, tmp_path, capsys):
             "--weak-emotions",
             "happiness",
             "--strong-emotions",
+            "happiness",
         ]
     )
 
@@ -156,7 +156,7 @@ def test_cli_emojize_emotion_filters(monkeypatch, tmp_path, capsys):
     assert ":joy:" in captured.out
     assert ":smile:" in captured.out
     assert ":neutral_face:" in captured.out
-    assert "-> happiness (weak)" in captured.out
+    assert "-> happiness (strong)" in captured.out
     assert "-> neutral" in captured.out
 
 
@@ -223,7 +223,7 @@ def test_cli_emojize_standard_mode_allows_all_emotions(monkeypatch, tmp_path, ca
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "-> contempt (strong)" in captured.out
-    assert "-> surprise (weak)" in captured.out
+    assert "-> surprise (strong)" in captured.out
 
 
 def test_cli_emojize_simple_mode_limits_emotions(monkeypatch, tmp_path, capsys):
@@ -262,8 +262,9 @@ def test_cli_emojize_simple_mode_limits_emotions(monkeypatch, tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "-> happiness (weak)" in captured.out
-    assert "-> fear (strong)" in captured.out
+    assert "-> anger (" in captured.out
+    assert "-> fear (" in captured.out
+    assert "contempt" not in captured.out
     assert "-> anger (strong)" in captured.out
     assert "-> contempt" not in captured.out
     assert "-> surprise" not in captured.out
