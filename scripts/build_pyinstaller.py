@@ -1,8 +1,8 @@
-"""Utility to build the TorchMoji CLI with PyInstaller.
+"""Utility to build the TorchMoji GUI with PyInstaller.
 
 This automates the manual steps documented in the repository by:
 * ensuring the pretrained model assets are available;
-* generating the PyInstaller entry script and spec file; and
+* generating the PyInstaller spec file for the GUI application; and
 * patching the spec so the frozen binary bundles the model data and Torch
   dynamic libraries before producing the final executable.
 
@@ -27,8 +27,8 @@ from typing import Iterable
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ENTRY_SCRIPT = PROJECT_ROOT / "pyinstaller_entry.py"
-SPEC_FILE = PROJECT_ROOT / "torchmoji-cli.spec"
+ENTRY_SCRIPT = PROJECT_ROOT / "torchmoji" / "gui_main.py"
+SPEC_FILE = PROJECT_ROOT / "torchmoji-gui.spec"
 MODEL_DIR = PROJECT_ROOT / "model"
 MODEL_FILES = (
     MODEL_DIR / "vocabulary.json",
@@ -77,20 +77,12 @@ def ensure_model_assets(*, skip_download: bool) -> None:
 
 
 def ensure_entry_script() -> None:
-    """Confirm the PyInstaller entry script matches the expected content."""
-    expected = (
-        "from torchmoji.cli import main\n\n\n"
-        "if __name__ == \"__main__\":\n"
-        "    raise SystemExit(main())\n"
-    )
-    if ENTRY_SCRIPT.exists():
-        current = ENTRY_SCRIPT.read_text()
-        if current == expected:
-            return
-        print("[build_pyinstaller] Updating pyinstaller_entry.py to the expected content.")
-    else:
-        print("[build_pyinstaller] Creating pyinstaller_entry.py.")
-    ENTRY_SCRIPT.write_text(expected)
+    """Verify the GUI entry script exists."""
+    if not ENTRY_SCRIPT.exists():
+        raise SystemExit(
+            f"GUI entry script not found at {ENTRY_SCRIPT}. "
+            "Ensure the torchmoji package is properly installed."
+        )
 
 
 def generate_spec_file() -> None:
@@ -105,7 +97,8 @@ def generate_spec_file() -> None:
             str(ENTRY_SCRIPT),
             "--onefile",
             "--name",
-            "torchmoji-cli",
+            "torchmoji-gui",
+            "--noconsole",
             "--collect-submodules",
             "torch",
             "--collect-submodules",
@@ -114,6 +107,8 @@ def generate_spec_file() -> None:
             "sklearn",
             "--collect-all",
             "emoji",
+            "--collect-all",
+            "PySide6",
         ]
     )
 
@@ -155,7 +150,7 @@ def patch_spec_file() -> None:
 
     if changed:
         SPEC_FILE.write_text(text)
-        print("[build_pyinstaller] Updated torchmoji-cli.spec with model data and Torch binaries.")
+        print("[build_pyinstaller] Updated torchmoji-gui.spec with model data and Torch binaries.")
     else:
         print("[build_pyinstaller] Spec file already contains the required patches.")
 
@@ -201,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     patch_spec_file()
     run_spec_build()
 
-    print("[build_pyinstaller] Build complete. Check the dist/ directory for the executable.")
+    print("[build_pyinstaller] Build complete. Check the dist/ directory for the GUI executable.")
     return 0
 
 
