@@ -1,7 +1,7 @@
 """Entry point launching the TorchMoji GUI application."""
 from __future__ import annotations
 
-from .gui import TorchMojiApplication
+from torchmoji.gui import TorchMojiApplication
 
 
 def main() -> int:
