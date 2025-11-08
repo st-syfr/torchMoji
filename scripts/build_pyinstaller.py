@@ -18,10 +18,12 @@ place.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Iterable
 
@@ -165,7 +167,74 @@ def patch_spec_file() -> None:
 
 
 def run_spec_build() -> None:
-    run_command([sys.executable, "-m", "PyInstaller", str(SPEC_FILE)])
+    """Run PyInstaller with the generated spec file, with Windows-specific error handling."""
+    try:
+        run_command([sys.executable, "-m", "PyInstaller", str(SPEC_FILE)])
+    except subprocess.CalledProcessError as e:
+        # Check if this might be a Windows permission error
+        # PyInstaller's error will show up in the subprocess output
+        error_msg = (
+            "PyInstaller build failed.\n"
+            "\n"
+            "If you see a 'PermissionError' or 'Access is denied' error on Windows:\n"
+            "  • The executable (e.g., torchmoji-gui.exe) may still be running in the system tray\n"
+            "  • Windows Defender or antivirus may be scanning the file\n"
+            "  • File Explorer may have the dist/ directory open\n"
+            "\n"
+            "Try the following:\n"
+            "  1. Close the TorchMoji app from the system tray (right-click → Quit)\n"
+            "  2. Close File Explorer windows showing the dist/ directory\n"
+            "  3. Run this script with the --clean flag to force cleanup before build\n"
+            "  4. Wait a few seconds and try again\n"
+            "  5. Manually delete the dist/ directory before running this script\n"
+        )
+        print(f"\n[build_pyinstaller] {error_msg}", file=sys.stderr)
+        raise
+
+
+def check_for_running_gui() -> bool:
+    """Check if torchmoji-gui is running and prompt user to close it.
+    
+    Returns True if the user confirms they've closed it, False otherwise.
+    """
+    import platform
+    
+    # Only check on Windows where the tray app is most commonly used
+    if platform.system() != "Windows":
+        return True
+    
+    # Try to detect if torchmoji-gui.exe is running
+    try:
+        import psutil
+        torchmoji_processes = [
+            proc for proc in psutil.process_iter(['name'])
+            if 'torchmoji-gui' in proc.info['name'].lower()
+        ]
+        
+        if torchmoji_processes:
+            print("\n" + "=" * 70)
+            print("[build_pyinstaller] WARNING: TorchMoji GUI is currently running!")
+            print("=" * 70)
+            print("\nThe TorchMoji application is running in the system tray.")
+            print("This will prevent PyInstaller from overwriting the executable.")
+            print("\nPlease follow these steps:")
+            print("  1. Right-click the TorchMoji icon in the system tray")
+            print("  2. Select 'Quit' to close the application")
+            print("  3. Wait a moment for the process to fully exit")
+            print("  4. Press Enter here to continue the build")
+            print("\n" + "=" * 70)
+            
+            try:
+                input("Press Enter when you have closed the application... ")
+                return True
+            except (KeyboardInterrupt, EOFError):
+                print("\n[build_pyinstaller] Build cancelled by user.")
+                return False
+    except ImportError:
+        # psutil not available, skip the check
+        pass
+    
+    return True
 
 
 def clean_build_artifacts(
@@ -178,6 +247,41 @@ def clean_build_artifacts(
             return str(path.relative_to(PROJECT_ROOT))
         except ValueError:
             return str(path)
+
+    def remove_with_retry(path: Path, max_retries: int = 3, delay: float = 1.0) -> None:
+        """Remove a file or directory with retry logic for Windows file locking."""
+        for attempt in range(max_retries):
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                return
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    print(
+                        f"[build_pyinstaller] WARNING: Failed to remove {describe(path)} "
+                        f"(attempt {attempt + 1}/{max_retries}). Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    # On final attempt, raise with helpful message
+                    raise PermissionError(
+                        f"Unable to remove {describe(path)} after {max_retries} attempts.\n"
+                        f"\n"
+                        f"Common causes on Windows:\n"
+                        f"  • The executable (e.g., torchmoji-gui.exe) is still running in the system tray\n"
+                        f"  • Windows Defender or antivirus software is scanning the file\n"
+                        f"  • File Explorer has the file or directory open\n"
+                        f"  • Another process is accessing the file\n"
+                        f"\n"
+                        f"Try the following:\n"
+                        f"  1. Close the TorchMoji app from the system tray (right-click → Quit)\n"
+                        f"  2. Close File Explorer windows showing the dist/ directory\n"
+                        f"  3. Wait a few seconds and try again\n"
+                        f"  4. Temporarily disable antivirus software (if safe to do so)\n"
+                        f"  5. Manually delete the dist/ directory before running this script\n"
+                    ) from e
 
     message_context = f" ({context})" if context else ""
 
@@ -200,10 +304,7 @@ def clean_build_artifacts(
         print(
             f"[build_pyinstaller] Removing cached artifact{message_context}: {describe(path)}."
         )
-        if path.is_dir():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
+        remove_with_retry(path)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -225,6 +326,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     ensure_pyinstaller_available()
+
+    # Check if GUI is running and prompt user to close it
+    if not check_for_running_gui():
+        return 1  # User cancelled
 
     clean_build_artifacts(
         include_dist=args.clean, include_spec=True, context="pre-build"

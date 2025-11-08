@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 from textwrap import dedent
 
@@ -166,3 +167,155 @@ def test_patch_spec_file_idempotent(tmp_path: Path) -> None:
         
     finally:
         build_module.SPEC_FILE = original_spec_file
+
+
+def test_clean_build_artifacts_handles_permission_error(tmp_path: Path, monkeypatch) -> None:
+    """Test that clean_build_artifacts provides helpful error message on PermissionError."""
+    from scripts.build_pyinstaller import clean_build_artifacts, PROJECT_ROOT
+    import scripts.build_pyinstaller as build_module
+    
+    # Create a test directory structure
+    test_root = tmp_path / "test_project"
+    test_root.mkdir()
+    dist_dir = test_root / "dist"
+    dist_dir.mkdir()
+    test_exe = dist_dir / "test.exe"
+    test_exe.write_text("fake exe")
+    
+    # Monkey-patch PROJECT_ROOT
+    original_root = build_module.PROJECT_ROOT
+    build_module.PROJECT_ROOT = test_root
+    
+    # Create a mock that simulates permission error on first attempts, then succeeds
+    original_rmtree = shutil.rmtree
+    attempt_count = [0]
+    
+    def mock_rmtree_fail_once(path, *args, **kwargs):
+        attempt_count[0] += 1
+        if attempt_count[0] <= 1:
+            raise PermissionError(f"Access denied: {path}")
+        # On retry, succeed
+        original_rmtree(path, *args, **kwargs)
+    
+    monkeypatch.setattr(shutil, "rmtree", mock_rmtree_fail_once)
+    
+    try:
+        # Should succeed after retry
+        clean_build_artifacts(include_dist=True, include_spec=False)
+        
+        # Verify directory was removed
+        assert not dist_dir.exists()
+        # Verify retry was attempted
+        assert attempt_count[0] == 2
+        
+    finally:
+        build_module.PROJECT_ROOT = original_root
+
+
+def test_clean_build_artifacts_fails_with_helpful_message(tmp_path: Path, monkeypatch) -> None:
+    """Test that clean_build_artifacts gives helpful error message after max retries."""
+    from scripts.build_pyinstaller import clean_build_artifacts, PROJECT_ROOT
+    import scripts.build_pyinstaller as build_module
+    
+    # Create a test directory
+    test_root = tmp_path / "test_project"
+    test_root.mkdir()
+    dist_dir = test_root / "dist"
+    dist_dir.mkdir()
+    
+    # Monkey-patch PROJECT_ROOT
+    original_root = build_module.PROJECT_ROOT
+    build_module.PROJECT_ROOT = test_root
+    
+    # Mock rmtree to always fail
+    def mock_rmtree_always_fail(path, *args, **kwargs):
+        raise PermissionError(f"Access denied: {path}")
+    
+    monkeypatch.setattr(shutil, "rmtree", mock_rmtree_always_fail)
+    
+    try:
+        # Should raise PermissionError with helpful message
+        with pytest.raises(PermissionError) as exc_info:
+            clean_build_artifacts(include_dist=True, include_spec=False)
+        
+        error_message = str(exc_info.value)
+        # Check that helpful error message is present
+        assert "Common causes on Windows:" in error_message
+        assert "The executable" in error_message
+        assert "Windows Defender" in error_message
+        assert "Try the following:" in error_message
+        
+    finally:
+        build_module.PROJECT_ROOT = original_root
+
+
+def test_check_for_running_gui_on_non_windows(monkeypatch) -> None:
+    """Test that check_for_running_gui returns True on non-Windows platforms."""
+    from scripts.build_pyinstaller import check_for_running_gui
+    import platform
+    
+    # Mock platform.system to return Linux
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    
+    # Should return True without prompting
+    assert check_for_running_gui() is True
+
+
+def test_check_for_running_gui_on_windows_without_psutil(monkeypatch) -> None:
+    """Test that check_for_running_gui returns True when psutil is not available."""
+    from scripts.build_pyinstaller import check_for_running_gui
+    import platform
+    import sys
+    
+    # Mock platform.system to return Windows
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+    
+    # Mock psutil import to fail
+    import builtins
+    real_import = builtins.__import__
+    
+    def mock_import(name, *args, **kwargs):
+        if name == "psutil":
+            raise ImportError("psutil not available")
+        return real_import(name, *args, **kwargs)
+    
+    monkeypatch.setattr(builtins, "__import__", mock_import)
+    
+    # Should return True (skip check when psutil unavailable)
+    assert check_for_running_gui() is True
+
+
+def test_check_for_running_gui_detects_running_process(monkeypatch) -> None:
+    """Test that check_for_running_gui detects running torchmoji-gui process."""
+    from scripts.build_pyinstaller import check_for_running_gui
+    import platform
+    
+    # Mock platform.system to return Windows
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+    
+    # Mock psutil to simulate a running process
+    class MockProcess:
+        def __init__(self, name):
+            self.info = {'name': name}
+    
+    class MockPsutil:
+        @staticmethod
+        def process_iter(attrs):
+            # Simulate finding a torchmoji-gui process
+            return [MockProcess('torchmoji-gui.exe')]
+    
+    # Mock the psutil import
+    import sys
+    sys.modules['psutil'] = MockPsutil()
+    
+    # Mock input to simulate user pressing Enter
+    monkeypatch.setattr('builtins.input', lambda _: '')
+    
+    try:
+        # Should prompt user and return True when they press Enter
+        result = check_for_running_gui()
+        assert result is True
+    finally:
+        # Clean up mock
+        if 'psutil' in sys.modules:
+            del sys.modules['psutil']
