@@ -83,6 +83,63 @@ The interface minimises to the system tray instead of exiting when the window is
 
 For packaging, ``scripts/pyinstaller_tray.spec`` can be used to build a standalone executable that bundles the tray UI together with the model assets. GUI smoke tests are currently manual, while non-UI helpers are covered by automated unit tests.
 
+## HTTP API Server
+
+The project includes an HTTP API server for programmatic access to TorchMoji predictions and settings management. This allows you to integrate TorchMoji into other applications or services.
+
+1. Install the optional API dependencies:
+
+   ```bash
+   pip install "torchmoji[api]"
+   ```
+
+2. Start the API server:
+
+   ```bash
+   torchmoji-api
+   ```
+
+   Or with custom host and port:
+
+   ```bash
+   torchmoji-api --host 0.0.0.0 --port 8080
+   ```
+
+The API server provides the following endpoints:
+
+- **POST /predict** - Predict emojis for text
+  ```bash
+  curl -X POST http://127.0.0.1:5000/predict \
+    -H "Content-Type: application/json" \
+    -d '{"text": "I love this!"}'
+  ```
+
+- **GET /settings** - Get current settings
+  ```bash
+  curl http://127.0.0.1:5000/settings
+  ```
+
+- **POST /settings** - Update settings (with optional persistence)
+  ```bash
+  curl -X POST http://127.0.0.1:5000/settings \
+    -H "Content-Type: application/json" \
+    -d '{"top_k": 3, "scores": true, "persist": true}'
+  ```
+
+- **GET /cli-preview** - Get CLI command preview for current settings
+  ```bash
+  curl "http://127.0.0.1:5000/cli-preview?text=hello%20world"
+  ```
+
+- **GET /health** - Health check endpoint
+  ```bash
+  curl http://127.0.0.1:5000/health
+  ```
+
+The API server uses the same settings infrastructure as the GUI, allowing you to dynamically reconfigure predictions without restarting the server. You can also override settings on a per-request basis by including a `settings` object in the prediction request.
+
+See `examples/api_example.py` for a complete Python example demonstrating all API features.
+
 ## Testing
 To run the test suite with Python 3.10+, install [pytest](https://docs.pytest.org/) in your environment:
 

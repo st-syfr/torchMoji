@@ -31,11 +31,15 @@ test = [
     "pytest>=7",
 ]
 gui = []
+api = [
+    "flask>=2.0,<4",
+]
 
 [project.scripts]
 torchmoji = "torchmoji.cli:main"
 torchmoji-app = "torchmoji.app_cli:main"
 torchmoji-gui = "torchmoji.gui_main:main"
+torchmoji-api = "torchmoji.api_server:main"
 
 [tool.setuptools]
 include-package-data = true
