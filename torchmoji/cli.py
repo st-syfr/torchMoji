@@ -8,18 +8,10 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 import emoji
-import numpy as np
-import torch
 
-from .emojis import (
-    EMOJI_ALIASES,
-    EmotionName,
-    NonNeutralEmotionName,
-    filter_emojis_by_emotion,
-)
+from .emojis import EMOJI_ALIASES, EmotionName, NonNeutralEmotionName
 from .global_variables import PRETRAINED_PATH, VOCAB_PATH
-from .model_def import torchmoji_emojis
-from .sentence_tokenizer import SentenceTokenizer
+from .runtime import PredictionSettings, get_runtime
 
 _HELP_URL = "https://github.com/huggingface/torchMoji#download-the-pretrained-weights"
 
@@ -153,33 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
     emojize_parser.set_defaults(func=_run_emojize)
 
     return parser
-
-
-def _load_vocabulary(path: Path) -> dict:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def _build_tokenizer(vocabulary: dict, maxlen: int) -> SentenceTokenizer:
-    return SentenceTokenizer(vocabulary, maxlen)
-
-
-def _load_model(weights_path: Path):
-    return torchmoji_emojis(str(weights_path))
-
-
 def _emoji_from_alias(alias: str) -> str:
     try:
         return emoji.emojize(alias, language="alias")
     except TypeError:
         # emoji<2 uses the use_aliases flag instead of the language argument
         return emoji.emojize(alias, use_aliases=True)
-
-
-def _top_indices(array: np.ndarray, limit: int) -> Sequence[int]:
-    limit = max(1, min(limit, array.size))
-    indices = np.argpartition(array, -limit)[-limit:]
-    return indices[np.argsort(array[indices])][::-1]
 
 
 def _ensure_file(path: Path, description: str) -> bool:
@@ -206,46 +177,6 @@ def _run_emojize(args: argparse.Namespace) -> int:
     if not _ensure_file(vocab_path, "vocabulary file"):
         return 2
 
-    try:
-        vocabulary = _load_vocabulary(vocab_path)
-    except FileNotFoundError:
-        print(f"Error: could not open vocabulary file '{vocab_path}'.", file=sys.stderr)
-        return 2
-    except json.JSONDecodeError as exc:
-        print(f"Error: failed to parse vocabulary JSON: {exc}", file=sys.stderr)
-        return 2
-
-    tokenizer = _build_tokenizer(vocabulary, args.maxlen)
-
-    try:
-        tokenized, _, _ = tokenizer.tokenize_sentences([args.text])
-    except Exception as exc:  # pragma: no cover - defensive guard
-        print(f"Error tokenizing text: {exc}", file=sys.stderr)
-        return 2
-
-    try:
-        model = _load_model(weights_path)
-    except FileNotFoundError:
-        print(f"Error: pretrained weights not found at '{weights_path}'.", file=sys.stderr)
-        print(f"Download them following the instructions at {_HELP_URL}", file=sys.stderr)
-        return 2
-
-    model.eval()
-    with torch.no_grad():
-        probabilities = model(tokenized)[0]
-    if hasattr(probabilities, "cpu"):
-        probabilities = probabilities.cpu()
-    if hasattr(probabilities, "numpy"):
-        probabilities = probabilities.numpy()
-
-    probabilities = np.asarray(probabilities, dtype=np.float32)
-
-    if probabilities.size != len(EMOJI_ALIASES):
-        print(
-            f"Warning: expected {len(EMOJI_ALIASES)} emoji classes but received {probabilities.size}.",
-            file=sys.stderr,
-        )
-
     allowed_emotions, weak_emotions, strong_emotions = _resolve_emotion_filters(
         args.mode,
         args.emotions,
@@ -253,22 +184,46 @@ def _run_emojize(args: argparse.Namespace) -> int:
         args.strong_emotions,
     )
 
-    selections = None
-    if probabilities.size == len(EMOJI_ALIASES):
-        selections = filter_emojis_by_emotion(
-            probabilities,
-            args.top_k,
-            allowed_emotions,
-            weak_emotions,
-            strong_emotions,
+    try:
+        runtime = get_runtime(weights_path, vocab_path, args.maxlen)
+    except FileNotFoundError:
+        print(f"Error: pretrained weights not found at '{weights_path}'.", file=sys.stderr)
+        print(f"Download them following the instructions at {_HELP_URL}", file=sys.stderr)
+        return 2
+    except json.JSONDecodeError as exc:
+        print(f"Error: failed to parse vocabulary JSON: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"Error: could not initialise TorchMoji runtime: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        result = runtime.predict(
+            args.text,
+            PredictionSettings(
+                top_k=args.top_k,
+                allowed_emotions=allowed_emotions,
+                weak_emotions=weak_emotions,
+                strong_emotions=strong_emotions,
+            ),
         )
-    else:
-        top_indices = _top_indices(probabilities, args.top_k)
-        selections = [(index, None) for index in top_indices]
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    probabilities = result.probabilities
+
+    if probabilities.size != len(EMOJI_ALIASES):
+        print(
+            f"Warning: expected {len(EMOJI_ALIASES)} emoji classes but received {probabilities.size}.",
+            file=sys.stderr,
+        )
 
     print(f"Input: {args.text}")
     print("Top predictions:")
-    for rank, (index, ranking) in enumerate(selections, start=1):
+    for rank, selection in enumerate(result.selections, start=1):
+        index = selection.index
+        ranking = selection.ranking
         alias = EMOJI_ALIASES[index]
         char = _emoji_from_alias(alias)
         emotion_label = None
@@ -277,8 +232,8 @@ def _run_emojize(args: argparse.Namespace) -> int:
             if ranking.intensity is not None:
                 emotion_label = f"{emotion_label} ({ranking.intensity})"
         label_suffix = f" -> {emotion_label}" if emotion_label else ""
-        if args.scores and index < probabilities.size:
-            score = float(probabilities[index])
+        if args.scores and selection.score is not None:
+            score = selection.score
             print(f"{rank}. {char} {alias}{label_suffix} (score={score:.4f})")
         else:
             print(f"{rank}. {char} {alias}{label_suffix}")

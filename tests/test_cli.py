@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 
 import numpy as np
-import torch
 
 from torchmoji import cli
-from torchmoji.emojis import EMOJI_ALIASES
+from torchmoji.emojis import EMOJI_ALIASES, EmotionRanking
+from torchmoji import runtime
 
 
 def test_cli_missing_weights(tmp_path, capsys):
@@ -38,37 +38,20 @@ def test_cli_emojize_outputs_predictions(monkeypatch, tmp_path, capsys):
     weights_path = tmp_path / "weights.bin"
     weights_path.write_bytes(b"stub")
 
-    class DummyTokenizer:
-        def __init__(self, vocabulary, maxlen):
-            self.vocabulary = vocabulary
-            self.maxlen = maxlen
+    probabilities = np.zeros(len(EMOJI_ALIASES), dtype=np.float32)
+    probabilities[3] = 0.9
+    probabilities[5] = 0.5
+    probabilities[0] = 0.2
 
-        def tokenize_sentences(self, sentences):
-            return np.zeros((len(sentences), 2), dtype=np.int64), None, None
+    selections = [
+        runtime.EmojiSelection(3, EmotionRanking("sadness", "strong"), 0.9),
+        runtime.EmojiSelection(5, EmotionRanking("happiness", "strong"), 0.5),
+        runtime.EmojiSelection(0, EmotionRanking("happiness", "strong"), 0.2),
+    ]
 
-    def fake_build_tokenizer(vocabulary, maxlen):
-        assert vocabulary == vocab
-        assert maxlen == 40
-        return DummyTokenizer(vocabulary, maxlen)
+    dummy_runtime = _DummyRuntime(runtime.EmojiPredictionResult(probabilities, selections))
 
-    class DummyModel:
-        def __init__(self):
-            self.eval_called = False
-
-        def eval(self):
-            self.eval_called = True
-
-        def __call__(self, tokenized):
-            tensor = torch.zeros((1, len(EMOJI_ALIASES)), dtype=torch.float32)
-            tensor[0, 3] = 0.9
-            tensor[0, 5] = 0.5
-            tensor[0, 0] = 0.2
-            return tensor
-
-    dummy_model = DummyModel()
-
-    monkeypatch.setattr(cli, "_build_tokenizer", fake_build_tokenizer)
-    monkeypatch.setattr(cli, "_load_model", lambda path: dummy_model)
+    monkeypatch.setattr(cli, "get_runtime", lambda *args, **kwargs: dummy_runtime)
 
     exit_code = cli.main(
         [
@@ -95,7 +78,7 @@ def test_cli_emojize_outputs_predictions(monkeypatch, tmp_path, capsys):
     assert captured.out.count("-> sadness (strong)") >= 1
     assert "-> happiness (strong)" in captured.out
     assert "score=0.9000" in captured.out
-    assert dummy_model.eval_called
+    assert dummy_runtime.calls
 
 
 def test_cli_emojize_emotion_filters(monkeypatch, tmp_path, capsys):
@@ -106,30 +89,32 @@ def test_cli_emojize_emotion_filters(monkeypatch, tmp_path, capsys):
     weights_path = tmp_path / "weights.bin"
     weights_path.write_bytes(b"stub")
 
-    class DummyTokenizer:
-        def __init__(self, vocabulary, maxlen):
-            self.vocabulary = vocabulary
-            self.maxlen = maxlen
+    probabilities = np.zeros(len(EMOJI_ALIASES), dtype=np.float32)
+    probabilities[EMOJI_ALIASES.index(":joy:")] = 0.8
+    probabilities[EMOJI_ALIASES.index(":smile:")] = 0.7
+    probabilities[EMOJI_ALIASES.index(":neutral_face:")] = 0.6
 
-        def tokenize_sentences(self, sentences):
-            return np.zeros((len(sentences), 2), dtype=np.int64), None, None
+    selections = [
+        runtime.EmojiSelection(
+            EMOJI_ALIASES.index(":joy:"),
+            EmotionRanking("happiness", "strong"),
+            0.8,
+        ),
+        runtime.EmojiSelection(
+            EMOJI_ALIASES.index(":smile:"),
+            EmotionRanking("happiness", "weak"),
+            0.7,
+        ),
+        runtime.EmojiSelection(
+            EMOJI_ALIASES.index(":neutral_face:"),
+            EmotionRanking("neutral"),
+            0.6,
+        ),
+    ]
 
-    def fake_build_tokenizer(vocabulary, maxlen):
-        return DummyTokenizer(vocabulary, maxlen)
+    dummy_runtime = _DummyRuntime(runtime.EmojiPredictionResult(probabilities, selections))
 
-    class DummyModel:
-        def eval(self):
-            pass
-
-        def __call__(self, tokenized):
-            tensor = torch.zeros((1, len(EMOJI_ALIASES)), dtype=torch.float32)
-            tensor[0, EMOJI_ALIASES.index(":joy:")] = 0.8
-            tensor[0, EMOJI_ALIASES.index(":smile:")] = 0.7
-            tensor[0, EMOJI_ALIASES.index(":neutral_face:")] = 0.6
-            return tensor
-
-    monkeypatch.setattr(cli, "_build_tokenizer", fake_build_tokenizer)
-    monkeypatch.setattr(cli, "_load_model", lambda path: DummyModel())
+    monkeypatch.setattr(cli, "get_runtime", lambda *args, **kwargs: dummy_runtime)
 
     exit_code = cli.main(
         [
@@ -158,6 +143,7 @@ def test_cli_emojize_emotion_filters(monkeypatch, tmp_path, capsys):
     assert ":neutral_face:" in captured.out
     assert "-> happiness (strong)" in captured.out
     assert "-> neutral" in captured.out
+    assert dummy_runtime.calls[0][1].allowed_emotions == ["happiness", "neutral"]
 
 
 def _prepare_vocab_and_weights(tmp_path):
@@ -170,40 +156,28 @@ def _prepare_vocab_and_weights(tmp_path):
     return vocab_path, weights_path
 
 
-def _install_dummy_tokenizer(monkeypatch, expected_vocab, expected_maxlen=None):
-    class DummyTokenizer:
-        def __init__(self, vocabulary, maxlen):
-            self.vocabulary = vocabulary
-            self.maxlen = maxlen
-
-        def tokenize_sentences(self, sentences):
-            return np.zeros((len(sentences), 2), dtype=np.int64), None, None
-
-    def fake_build_tokenizer(vocabulary, maxlen):
-        assert vocabulary == expected_vocab
-        if expected_maxlen is not None:
-            assert maxlen == expected_maxlen
-        return DummyTokenizer(vocabulary, maxlen)
-
-    monkeypatch.setattr(cli, "_build_tokenizer", fake_build_tokenizer)
-
-
 def test_cli_emojize_standard_mode_allows_all_emotions(monkeypatch, tmp_path, capsys):
     vocab_path, weights_path = _prepare_vocab_and_weights(tmp_path)
-    vocab = json.loads(vocab_path.read_text(encoding="utf-8"))
-    _install_dummy_tokenizer(monkeypatch, vocab)
+    probabilities = np.zeros(len(EMOJI_ALIASES), dtype=np.float32)
+    probabilities[EMOJI_ALIASES.index(":information_desk_person:")] = 0.9
+    probabilities[EMOJI_ALIASES.index(":see_no_evil:")] = 0.8
 
-    class DummyModel:
-        def eval(self):
-            pass
+    selections = [
+        runtime.EmojiSelection(
+            EMOJI_ALIASES.index(":information_desk_person:"),
+            EmotionRanking("contempt", "strong"),
+            0.9,
+        ),
+        runtime.EmojiSelection(
+            EMOJI_ALIASES.index(":see_no_evil:"),
+            EmotionRanking("surprise", "strong"),
+            0.8,
+        ),
+    ]
 
-        def __call__(self, tokenized):
-            tensor = torch.zeros((1, len(EMOJI_ALIASES)), dtype=torch.float32)
-            tensor[0, EMOJI_ALIASES.index(":information_desk_person:")] = 0.9
-            tensor[0, EMOJI_ALIASES.index(":see_no_evil:")] = 0.8
-            return tensor
+    dummy_runtime = _DummyRuntime(runtime.EmojiPredictionResult(probabilities, selections))
 
-    monkeypatch.setattr(cli, "_load_model", lambda path: DummyModel())
+    monkeypatch.setattr(cli, "get_runtime", lambda *args, **kwargs: dummy_runtime)
 
     exit_code = cli.main(
         [
@@ -228,22 +202,38 @@ def test_cli_emojize_standard_mode_allows_all_emotions(monkeypatch, tmp_path, ca
 
 def test_cli_emojize_simple_mode_limits_emotions(monkeypatch, tmp_path, capsys):
     vocab_path, weights_path = _prepare_vocab_and_weights(tmp_path)
-    vocab = json.loads(vocab_path.read_text(encoding="utf-8"))
-    _install_dummy_tokenizer(monkeypatch, vocab)
+    probabilities = np.zeros(len(EMOJI_ALIASES), dtype=np.float32)
+    probabilities[EMOJI_ALIASES.index(":joy:")] = 0.9
+    probabilities[EMOJI_ALIASES.index(":rage:")] = 0.8
+    probabilities[EMOJI_ALIASES.index(":mask:")] = 0.7
+    probabilities[EMOJI_ALIASES.index(":cry:")] = 0.6
 
-    class DummyModel:
-        def eval(self):
-            pass
+    selections = [
+        runtime.EmojiSelection(
+            EMOJI_ALIASES.index(":joy:"),
+            EmotionRanking("happiness", "strong"),
+            0.9,
+        ),
+        runtime.EmojiSelection(
+            EMOJI_ALIASES.index(":rage:"),
+            EmotionRanking("anger", "strong"),
+            0.8,
+        ),
+        runtime.EmojiSelection(
+            EMOJI_ALIASES.index(":mask:"),
+            EmotionRanking("fear", "strong"),
+            0.7,
+        ),
+        runtime.EmojiSelection(
+            EMOJI_ALIASES.index(":cry:"),
+            EmotionRanking("sadness", "strong"),
+            0.6,
+        ),
+    ]
 
-        def __call__(self, tokenized):
-            tensor = torch.zeros((1, len(EMOJI_ALIASES)), dtype=torch.float32)
-            tensor[0, EMOJI_ALIASES.index(":information_desk_person:")] = 0.9
-            tensor[0, EMOJI_ALIASES.index(":see_no_evil:")] = 0.8
-            tensor[0, EMOJI_ALIASES.index(":rage:")] = 0.7
-            tensor[0, EMOJI_ALIASES.index(":mask:")] = 0.6
-            return tensor
+    dummy_runtime = _DummyRuntime(runtime.EmojiPredictionResult(probabilities, selections))
 
-    monkeypatch.setattr(cli, "_load_model", lambda path: DummyModel())
+    monkeypatch.setattr(cli, "get_runtime", lambda *args, **kwargs: dummy_runtime)
 
     exit_code = cli.main(
         [
@@ -268,3 +258,14 @@ def test_cli_emojize_simple_mode_limits_emotions(monkeypatch, tmp_path, capsys):
     assert "-> anger (strong)" in captured.out
     assert "-> contempt" not in captured.out
     assert "-> surprise" not in captured.out
+    assert "contempt" not in dummy_runtime.calls[0][1].allowed_emotions
+
+
+class _DummyRuntime:
+    def __init__(self, result):
+        self._result = result
+        self.calls = []
+
+    def predict(self, text, settings):
+        self.calls.append((text, settings))
+        return self._result
