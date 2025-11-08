@@ -247,3 +247,75 @@ def test_clean_build_artifacts_fails_with_helpful_message(tmp_path: Path, monkey
         
     finally:
         build_module.PROJECT_ROOT = original_root
+
+
+def test_check_for_running_gui_on_non_windows(monkeypatch) -> None:
+    """Test that check_for_running_gui returns True on non-Windows platforms."""
+    from scripts.build_pyinstaller import check_for_running_gui
+    import platform
+    
+    # Mock platform.system to return Linux
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    
+    # Should return True without prompting
+    assert check_for_running_gui() is True
+
+
+def test_check_for_running_gui_on_windows_without_psutil(monkeypatch) -> None:
+    """Test that check_for_running_gui returns True when psutil is not available."""
+    from scripts.build_pyinstaller import check_for_running_gui
+    import platform
+    import sys
+    
+    # Mock platform.system to return Windows
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+    
+    # Mock psutil import to fail
+    import builtins
+    real_import = builtins.__import__
+    
+    def mock_import(name, *args, **kwargs):
+        if name == "psutil":
+            raise ImportError("psutil not available")
+        return real_import(name, *args, **kwargs)
+    
+    monkeypatch.setattr(builtins, "__import__", mock_import)
+    
+    # Should return True (skip check when psutil unavailable)
+    assert check_for_running_gui() is True
+
+
+def test_check_for_running_gui_detects_running_process(monkeypatch) -> None:
+    """Test that check_for_running_gui detects running torchmoji-gui process."""
+    from scripts.build_pyinstaller import check_for_running_gui
+    import platform
+    
+    # Mock platform.system to return Windows
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+    
+    # Mock psutil to simulate a running process
+    class MockProcess:
+        def __init__(self, name):
+            self.info = {'name': name}
+    
+    class MockPsutil:
+        @staticmethod
+        def process_iter(attrs):
+            # Simulate finding a torchmoji-gui process
+            return [MockProcess('torchmoji-gui.exe')]
+    
+    # Mock the psutil import
+    import sys
+    sys.modules['psutil'] = MockPsutil()
+    
+    # Mock input to simulate user pressing Enter
+    monkeypatch.setattr('builtins.input', lambda _: '')
+    
+    try:
+        # Should prompt user and return True when they press Enter
+        result = check_for_running_gui()
+        assert result is True
+    finally:
+        # Clean up mock
+        if 'psutil' in sys.modules:
+            del sys.modules['psutil']
