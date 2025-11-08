@@ -131,10 +131,10 @@ def patch_spec_file() -> None:
 
     datas_pattern = re.compile(r"datas\s*=\s*\[\s*\]\s*,?")
     datas_replacement = (
-        "datas=[\n"
-        "        (\"model/vocabulary.json\", \"model\"),\n"
-        "        (\"model/pytorch_model.bin\", \"model\"),\n"
-        "    ],"
+        "datas = [\n"
+        "    (\"model/vocabulary.json\", \"model\"),\n"
+        "    (\"model/pytorch_model.bin\", \"model\"),\n"
+        "]\n"
     )
     if "model/vocabulary.json" not in text:
         text, count = datas_pattern.subn(datas_replacement, text, count=1)
@@ -144,7 +144,11 @@ def patch_spec_file() -> None:
 
     binaries_pattern = re.compile(r"binaries\s*=\s*\[\s*\]\s*,?")
     if "collect_dynamic_libs(\"torch\")" not in text:
-        text, count = binaries_pattern.subn('binaries=collect_dynamic_libs("torch"),', text, count=1)
+        text, count = binaries_pattern.subn(
+            'binaries = collect_dynamic_libs("torch")\n',
+            text,
+            count=1,
+        )
         if count == 0:
             raise SystemExit("Failed to patch binaries section in spec file.")
         changed = True
