@@ -18,10 +18,12 @@ place.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Iterable
 
@@ -165,7 +167,29 @@ def patch_spec_file() -> None:
 
 
 def run_spec_build() -> None:
-    run_command([sys.executable, "-m", "PyInstaller", str(SPEC_FILE)])
+    """Run PyInstaller with the generated spec file, with Windows-specific error handling."""
+    try:
+        run_command([sys.executable, "-m", "PyInstaller", str(SPEC_FILE)])
+    except subprocess.CalledProcessError as e:
+        # Check if this might be a Windows permission error
+        # PyInstaller's error will show up in the subprocess output
+        error_msg = (
+            "PyInstaller build failed.\n"
+            "\n"
+            "If you see a 'PermissionError' or 'Access is denied' error on Windows:\n"
+            "  • The executable (e.g., torchmoji-gui.exe) may still be running\n"
+            "  • Windows Defender or antivirus may be scanning the file\n"
+            "  • File Explorer may have the dist/ directory open\n"
+            "\n"
+            "Try the following:\n"
+            "  1. Close all instances of the executable if it's running\n"
+            "  2. Close File Explorer windows showing the dist/ directory\n"
+            "  3. Run this script with the --clean flag to force cleanup before build\n"
+            "  4. Wait a few seconds and try again\n"
+            "  5. Manually delete the dist/ directory before running this script\n"
+        )
+        print(f"\n[build_pyinstaller] {error_msg}", file=sys.stderr)
+        raise
 
 
 def clean_build_artifacts(
@@ -178,6 +202,41 @@ def clean_build_artifacts(
             return str(path.relative_to(PROJECT_ROOT))
         except ValueError:
             return str(path)
+
+    def remove_with_retry(path: Path, max_retries: int = 3, delay: float = 1.0) -> None:
+        """Remove a file or directory with retry logic for Windows file locking."""
+        for attempt in range(max_retries):
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                return
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    print(
+                        f"[build_pyinstaller] WARNING: Failed to remove {describe(path)} "
+                        f"(attempt {attempt + 1}/{max_retries}). Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    # On final attempt, raise with helpful message
+                    raise PermissionError(
+                        f"Unable to remove {describe(path)} after {max_retries} attempts.\n"
+                        f"\n"
+                        f"Common causes on Windows:\n"
+                        f"  • The executable (e.g., torchmoji-gui.exe) is still running\n"
+                        f"  • Windows Defender or antivirus software is scanning the file\n"
+                        f"  • File Explorer has the file or directory open\n"
+                        f"  • Another process is accessing the file\n"
+                        f"\n"
+                        f"Try the following:\n"
+                        f"  1. Close all instances of the executable if it's running\n"
+                        f"  2. Close File Explorer windows showing the dist/ directory\n"
+                        f"  3. Wait a few seconds and try again\n"
+                        f"  4. Temporarily disable antivirus software (if safe to do so)\n"
+                        f"  5. Manually delete the dist/ directory before running this script\n"
+                    ) from e
 
     message_context = f" ({context})" if context else ""
 
@@ -200,10 +259,7 @@ def clean_build_artifacts(
         print(
             f"[build_pyinstaller] Removing cached artifact{message_context}: {describe(path)}."
         )
-        if path.is_dir():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
+        remove_with_retry(path)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
