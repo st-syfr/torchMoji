@@ -129,7 +129,7 @@ def patch_spec_file() -> None:
         text = "from PyInstaller.utils.hooks import collect_dynamic_libs\n" + text
         changed = True
 
-    datas_pattern = re.compile(r"datas\s*=\s*\[\s*\],")
+    datas_pattern = re.compile(r"datas\s*=\s*\[\s*\]\s*,?")
     datas_replacement = (
         "datas=[\n"
         "        (\"model/vocabulary.json\", \"model\"),\n"
@@ -142,7 +142,7 @@ def patch_spec_file() -> None:
             raise SystemExit("Failed to patch datas section in spec file.")
         changed = True
 
-    binaries_pattern = re.compile(r"binaries\s*=\s*\[\s*\],")
+    binaries_pattern = re.compile(r"binaries\s*=\s*\[\s*\]\s*,?")
     if "collect_dynamic_libs(\"torch\")" not in text:
         text, count = binaries_pattern.subn('binaries=collect_dynamic_libs("torch"),', text, count=1)
         if count == 0:
