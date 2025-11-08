@@ -93,7 +93,7 @@ def generate_spec_file() -> None:
         [
             sys.executable,
             "-m",
-            "PyInstaller",
+            "PyInstaller.utils.cliutils.makespec",
             str(ENTRY_SCRIPT),
             "--onefile",
             "--name",
