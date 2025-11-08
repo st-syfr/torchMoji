@@ -61,6 +61,28 @@ torchmoji emojize "It was the best concert ever!" --top-k 3 --scores
 
 By default the CLI looks for the vocabulary and pretrained weights inside the ``model/`` directory. Use ``--vocab`` and ``--weights`` to point to custom locations if you have stored them elsewhere. The command will explain how to download the weights if it cannot find them locally.
 
+## Graphical interface
+
+The project now ships with a desktop application that mirrors the CLI configuration in a more approachable tray experience.
+
+1. Install the optional GUI dependencies:
+
+   ```bash
+   pip install "torchmoji[gui]"
+   ```
+
+2. Launch the application with:
+
+   ```bash
+   torchmoji-gui
+   ```
+
+The window provides a text editor, live prediction results, and a preview of the exact ``torchmoji emojize`` command that would reproduce the current state. Use the *Copy to clipboard* button to grab the CLI invocation and paste it into a terminal or script. Open **Settings…** to adjust every ``TorchMojiSettings`` option, including the weights and vocabulary paths; changes are written to the same JSON file used by the CLI tools.
+
+The interface minimises to the system tray instead of exiting when the window is closed. Use the tray icon to reopen the window, tweak settings, or quit the process entirely. Notifications summarise the top emoji prediction so you can keep the main window hidden while still seeing updates.
+
+For packaging, ``scripts/pyinstaller_tray.spec`` can be used to build a standalone executable that bundles the tray UI together with the model assets. GUI smoke tests are currently manual, while non-UI helpers are covered by automated unit tests.
+
 ## Testing
 To run the test suite with Python 3.10+, install [pytest](https://docs.pytest.org/) in your environment:
 
