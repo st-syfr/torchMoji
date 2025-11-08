@@ -16,8 +16,13 @@ def __getattr__(name: str):  # pragma: no cover - small wrapper
         raise AttributeError(name)
     try:
         module = import_module("torchmoji.gui.app")
+    except ModuleNotFoundError as exc:  # pragma: no cover - import guard
+        message = "TorchMoji GUI requires PySide6 and pystray. Reinstall torchmoji to restore missing dependencies."
+        if exc.name and exc.name not in {"torchmoji.gui.app", "torchmoji.gui"}:
+            message = f"{message} Missing module: {exc.name}."
+        raise ImportError(message) from exc
     except ImportError as exc:  # pragma: no cover - import guard
         raise ImportError(
-            "TorchMoji GUI requires optional dependencies. Install via 'pip install torchmoji[gui]'."
+            "TorchMoji GUI requires PySide6 and pystray. Reinstall torchmoji to restore missing dependencies."
         ) from exc
     return getattr(module, name)
