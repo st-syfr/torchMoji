@@ -28,7 +28,7 @@ from typing import Iterable
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENTRY_SCRIPT = PROJECT_ROOT / "pyinstaller_entry.py"
-SPEC_FILE = PROJECT_ROOT / "pyinstaller_entry.spec"
+SPEC_FILE = PROJECT_ROOT / "torchmoji-cli.spec"
 MODEL_DIR = PROJECT_ROOT / "model"
 MODEL_FILES = (
     MODEL_DIR / "vocabulary.json",
@@ -151,7 +151,7 @@ def patch_spec_file() -> None:
 
     if changed:
         SPEC_FILE.write_text(text)
-        print("[build_pyinstaller] Updated pyinstaller_entry.spec with model data and Torch binaries.")
+        print("[build_pyinstaller] Updated torchmoji-cli.spec with model data and Torch binaries.")
     else:
         print("[build_pyinstaller] Spec file already contains the required patches.")
 
