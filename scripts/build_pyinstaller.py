@@ -168,12 +168,42 @@ def run_spec_build() -> None:
     run_command([sys.executable, "-m", "PyInstaller", str(SPEC_FILE)])
 
 
-def clean_build_artifacts() -> None:
-    for name in ("build", "dist", "__pycache__"):
+def clean_build_artifacts(
+    *, include_dist: bool = True, include_spec: bool = False, context: str | None = None
+) -> None:
+    """Remove cached files from previous PyInstaller builds."""
+
+    def describe(path: Path) -> str:
+        try:
+            return str(path.relative_to(PROJECT_ROOT))
+        except ValueError:
+            return str(path)
+
+    message_context = f" ({context})" if context else ""
+
+    targets: list[Path] = []
+
+    if include_spec and SPEC_FILE.exists():
+        targets.append(SPEC_FILE)
+
+    for name in ("build", "__pycache__"):
         path = PROJECT_ROOT / name
+        if path.exists():
+            targets.append(path)
+
+    if include_dist:
+        dist_path = PROJECT_ROOT / "dist"
+        if dist_path.exists():
+            targets.append(dist_path)
+
+    for path in targets:
+        print(
+            f"[build_pyinstaller] Removing cached artifact{message_context}: {describe(path)}."
+        )
         if path.is_dir():
-            print(f"[build_pyinstaller] Removing {path.relative_to(PROJECT_ROOT)} directory.")
             shutil.rmtree(path)
+        else:
+            path.unlink()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -196,8 +226,9 @@ def main(argv: list[str] | None = None) -> int:
 
     ensure_pyinstaller_available()
 
-    if args.clean:
-        clean_build_artifacts()
+    clean_build_artifacts(
+        include_dist=args.clean, include_spec=True, context="pre-build"
+    )
 
     ensure_model_assets(skip_download=args.skip_download)
     ensure_entry_script()
@@ -206,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
     run_spec_build()
 
     print("[build_pyinstaller] Build complete. Check the dist/ directory for the GUI executable.")
+
+    clean_build_artifacts(include_dist=False, include_spec=True, context="post-build")
     return 0
 
 
