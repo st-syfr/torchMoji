@@ -27,6 +27,9 @@ class TorchMojiSettings:
     strong_emotions: list[str] | None = None
     weights: str = str(PRETRAINED_PATH)
     vocab: str = str(VOCAB_PATH)
+    api_enabled: bool = False
+    api_host: str = "127.0.0.1"
+    api_port: int = 5000
 
     def __post_init__(self) -> None:  # pragma: no cover - exercised indirectly
         for name in _LIST_FIELDS:

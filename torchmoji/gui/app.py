@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -109,6 +110,35 @@ class SettingsDialog(QtWidgets.QDialog):
         vocab_layout.addWidget(self.vocab_button)
         form.addRow("Vocab", vocab_layout)
 
+        # API Server Settings Section
+        api_group = QtWidgets.QGroupBox("Local API Server")
+        api_layout = QtWidgets.QFormLayout(api_group)
+        
+        self.api_enabled_checkbox = QtWidgets.QCheckBox("Enable API server on startup")
+        self.api_enabled_checkbox.setChecked(self._settings.api_enabled)
+        api_layout.addRow("Enable", self.api_enabled_checkbox)
+        
+        self.api_host_edit = QtWidgets.QLineEdit(self._settings.api_host)
+        self.api_host_edit.setPlaceholderText("e.g., 127.0.0.1 or 0.0.0.0")
+        api_layout.addRow("Host", self.api_host_edit)
+        
+        self.api_port_spin = QtWidgets.QSpinBox()
+        self.api_port_spin.setRange(1024, 65535)
+        self.api_port_spin.setValue(self._settings.api_port)
+        api_layout.addRow("Port", self.api_port_spin)
+        
+        # Add informational text
+        info_label = QtWidgets.QLabel(
+            "The local API server allows other applications to interact with TorchMoji "
+            "while the GUI is running. When enabled, you can send prediction requests "
+            "via HTTP. See README for API documentation."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("QLabel { color: gray; font-size: 9pt; margin-top: 5px; }")
+        api_layout.addRow(info_label)
+        
+        layout.addWidget(api_group)
+
         self.weights_button.clicked.connect(lambda: self._browse_path(self.weights_edit))
         self.vocab_button.clicked.connect(lambda: self._browse_path(self.vocab_edit))
 
@@ -144,6 +174,9 @@ class SettingsDialog(QtWidgets.QDialog):
         self.strong_edit.clear()
         self.weights_edit.setText(defaults.weights)
         self.vocab_edit.setText(defaults.vocab)
+        self.api_enabled_checkbox.setChecked(defaults.api_enabled)
+        self.api_host_edit.setText(defaults.api_host)
+        self.api_port_spin.setValue(defaults.api_port)
 
     def _parse_list(self, text: str) -> list[str] | None:
         items = [item.strip() for item in text.replace("\n", ",").split(",")]
@@ -161,6 +194,9 @@ class SettingsDialog(QtWidgets.QDialog):
             strong_emotions=self._parse_list(self.strong_edit.text()),
             weights=self.weights_edit.text(),
             vocab=self.vocab_edit.text(),
+            api_enabled=self.api_enabled_checkbox.isChecked(),
+            api_host=self.api_host_edit.text(),
+            api_port=self.api_port_spin.value(),
         )
 
 
@@ -215,6 +251,32 @@ class TorchMojiMainWindow(QtWidgets.QWidget):
         command_layout.addWidget(self.copy_button, alignment=QtCore.Qt.AlignRight)
         layout.addWidget(command_box)
 
+        # API Server Status Section
+        api_box = QtWidgets.QGroupBox("Local API Server")
+        api_layout = QtWidgets.QVBoxLayout(api_box)
+        
+        status_layout = QtWidgets.QHBoxLayout()
+        self.api_status_label = QtWidgets.QLabel("Status: Stopped")
+        status_layout.addWidget(self.api_status_label)
+        status_layout.addStretch(1)
+        api_layout.addLayout(status_layout)
+        
+        self.api_url_label = QtWidgets.QLabel()
+        self.api_url_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        api_url_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        self.api_url_label.setFont(api_url_font)
+        api_layout.addWidget(self.api_url_label)
+        
+        self.api_info_label = QtWidgets.QLabel(
+            "Enable the API server in Settings to allow external applications to interact with TorchMoji. "
+            "See README for endpoint documentation."
+        )
+        self.api_info_label.setWordWrap(True)
+        self.api_info_label.setStyleSheet("QLabel { color: gray; font-size: 9pt; }")
+        api_layout.addWidget(self.api_info_label)
+        
+        layout.addWidget(api_box)
+
         self.settings_button.clicked.connect(self.settings_requested.emit)
         self.copy_button.clicked.connect(self._copy_command)
         self.text_input.textChanged.connect(self._emit_text_changed)
@@ -254,6 +316,15 @@ class TorchMojiMainWindow(QtWidgets.QWidget):
     def show_error(self, message: str) -> None:
         self.status_label.setText(message)
         QtWidgets.QMessageBox.warning(self, "TorchMoji", message)
+
+    def update_api_status(self, running: bool, host: str = "", port: int = 0) -> None:
+        """Update the API server status display."""
+        if running:
+            self.api_status_label.setText(f"Status: Running")
+            self.api_url_label.setText(f"API URL: http://{host}:{port}")
+        else:
+            self.api_status_label.setText("Status: Stopped")
+            self.api_url_label.setText("")
 
     def show_main(self) -> None:
         self.show()
@@ -302,6 +373,8 @@ class TorchMojiApplication(QtCore.QObject):
         self._thread_pool = QtCore.QThreadPool()
         self._active_workers: set[PredictionWorker] = set()
         self._tray_notified = False
+        self._api_server = None
+        self._api_thread = None
 
         self._main_window = TorchMojiMainWindow()
         self._main_window.settings_requested.connect(self._open_settings_dialog)
@@ -310,6 +383,13 @@ class TorchMojiApplication(QtCore.QObject):
 
         self._tray_icon = self._create_tray_icon()
         self._update_cli_preview()
+        
+        # Start API server if enabled in settings
+        if self._settings.api_enabled:
+            self._start_api_server()
+        else:
+            self._main_window.update_api_status(False)
+        
         self._main_window.show()
 
     def _create_tray_icon(self) -> QtWidgets.QSystemTrayIcon:
@@ -390,10 +470,62 @@ class TorchMojiApplication(QtCore.QObject):
     def _open_settings_dialog(self) -> None:
         dialog = SettingsDialog(self._settings, self._main_window)
         if dialog.exec() == QtWidgets.QDialog.Accepted:
+            old_api_settings = (self._settings.api_enabled, self._settings.api_host, self._settings.api_port)
             self._settings = dialog.get_settings()
             save_settings(self._settings)
             self._update_cli_preview()
             self._run_prediction()
+            
+            # Restart API server if settings changed
+            new_api_settings = (self._settings.api_enabled, self._settings.api_host, self._settings.api_port)
+            if old_api_settings != new_api_settings:
+                self._stop_api_server()
+                if self._settings.api_enabled:
+                    self._start_api_server()
+                else:
+                    self._main_window.update_api_status(False)
+
+    def _start_api_server(self) -> None:
+        """Start the API server in a background thread."""
+        if self._api_server is not None or self._api_thread is not None:
+            return
+        
+        try:
+            # Import here to avoid circular dependency
+            from ..api_server import TorchMojiAPIServer
+            
+            self._api_server = TorchMojiAPIServer(
+                host=self._settings.api_host,
+                port=self._settings.api_port
+            )
+            
+            # Run server in a daemon thread
+            self._api_thread = threading.Thread(
+                target=self._api_server.run,
+                kwargs={"debug": False},
+                daemon=True
+            )
+            self._api_thread.start()
+            
+            # Update UI
+            self._main_window.update_api_status(
+                True,
+                self._settings.api_host,
+                self._settings.api_port
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            self._main_window.show_error(f"Failed to start API server: {exc}")
+            self._api_server = None
+            self._api_thread = None
+
+    def _stop_api_server(self) -> None:
+        """Stop the API server."""
+        if self._api_server is not None:
+            # Flask doesn't provide a clean way to stop from another thread,
+            # but since we're using daemon threads, they'll stop when the app exits
+            self._api_server = None
+            self._api_thread = None
+            self._main_window.update_api_status(False)
 
     def run(self) -> int:
         """Start the Qt event loop and return its exit code."""
@@ -401,6 +533,7 @@ class TorchMojiApplication(QtCore.QObject):
         return self._qt_app.exec()
 
     def quit(self) -> None:
+        self._stop_api_server()
         self._tray_icon.hide()
         self._main_window.prepare_to_close()
         self._main_window.close()
