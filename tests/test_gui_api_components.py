@@ -44,7 +44,7 @@ def test_settings_dialog_includes_api_fields(qapp):
     assert hasattr(dialog, 'api_port_spin')
     
     # Check initial values
-    assert dialog.api_enabled_checkbox.isChecked() is False
+    assert dialog.api_enabled_checkbox.isChecked() is True
     assert dialog.api_host_edit.text() == "127.0.0.1"
     assert dialog.api_port_spin.value() == 5000
 
@@ -83,7 +83,7 @@ def test_settings_dialog_get_api_settings(qapp):
 def test_settings_dialog_reset_includes_api_defaults(qapp):
     """Test that reset button resets API settings to defaults."""
     settings = TorchMojiSettings(
-        api_enabled=True,
+        api_enabled=False,
         api_host="0.0.0.0",
         api_port=9999
     )
@@ -93,7 +93,7 @@ def test_settings_dialog_reset_includes_api_defaults(qapp):
     dialog._reset_defaults()
     
     # Verify defaults are restored
-    assert dialog.api_enabled_checkbox.isChecked() is False
+    assert dialog.api_enabled_checkbox.isChecked() is True
     assert dialog.api_host_edit.text() == "127.0.0.1"
     assert dialog.api_port_spin.value() == 5000
 
