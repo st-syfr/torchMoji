@@ -7,7 +7,7 @@ from torchmoji.settings import TorchMojiSettings
 def test_default_api_settings() -> None:
     """Test that default API settings are correct."""
     settings = TorchMojiSettings()
-    assert settings.api_enabled is False
+    assert settings.api_enabled is True
     assert settings.api_host == "127.0.0.1"
     assert settings.api_port == 5000
 
