@@ -17,6 +17,7 @@ SPECIAL_TOKENS = ['CUSTOM_MASK',
                   'CUSTOM_BREAK']
 SPECIAL_TOKENS.extend(['{}BLANK_{}'.format(SPECIAL_PREFIX, i) for i in range(6, 10)])
 
+
 # Determine if running in a PyInstaller bundle
 def _get_base_path():
     """Get the base path for resources, handling PyInstaller bundles."""
@@ -26,6 +27,7 @@ def _get_base_path():
     else:
         # Running in normal Python environment
         return dirname(dirname(abspath(__file__)))
+
 
 ROOT_PATH = _get_base_path()
 VOCAB_PATH = join(ROOT_PATH, 'model', 'vocabulary.json')
