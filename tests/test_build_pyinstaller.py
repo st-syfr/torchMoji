@@ -319,3 +319,21 @@ def test_check_for_running_gui_detects_running_process(monkeypatch) -> None:
         # Clean up mock
         if 'psutil' in sys.modules:
             del sys.modules['psutil']
+
+
+def test_cli_spec_includes_model_files() -> None:
+    """Test that torchmoji-cli.spec includes model files in datas."""
+    from pathlib import Path
+    
+    # Read the CLI spec file
+    project_root = Path(__file__).resolve().parent.parent
+    cli_spec_file = project_root / "torchmoji-cli.spec"
+    
+    assert cli_spec_file.exists(), "torchmoji-cli.spec file not found"
+    
+    spec_content = cli_spec_file.read_text()
+    
+    # Check that model files are included in datas
+    assert "model/vocabulary.json" in spec_content, "vocabulary.json not in spec datas"
+    assert "model/pytorch_model.bin" in spec_content, "pytorch_model.bin not in spec datas"
+    assert "'model'" in spec_content or '"model"' in spec_content, "model directory not specified in spec datas"

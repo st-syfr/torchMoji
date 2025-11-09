@@ -11,9 +11,15 @@ hiddenimports += collect_submodules('sklearn')
 tmp_ret = collect_all('emoji')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
+# Add model files to the bundle
+datas += [
+    ('model/vocabulary.json', 'model'),
+    ('model/pytorch_model.bin', 'model'),
+]
+
 
 a = Analysis(
-    ['C:\\Users\\miket\\PycharmProjects\\torchMoji_py10\\pyinstaller_entry.py'],
+    ['pyinstaller_entry.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
